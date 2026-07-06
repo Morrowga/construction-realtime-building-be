@@ -19,10 +19,14 @@ class ModelFileOut(BaseModel):
     project_id: uuid.UUID
     original_s3_key: str | None
     gltf_s3_key: str | None
+    envelope_s3_key: str | None
+    interior_s3_key: str | None
     source_type: ModelSourceType | None
     parse_status: ParseStatus
     parse_error: str | None
     zone_map: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
-    gltf_url: str | None = None  # pre-signed URL, populated at read time
+    gltf_url: str | None = None       # pre-signed URL, populated at read time
+    envelope_url: str | None = None   # pre-signed URL, populated at read time
+    interior_url: str | None = None   # pre-signed URL, populated at read time

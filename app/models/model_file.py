@@ -31,6 +31,14 @@ class ModelFile(TimestampMixin, Base):
     )
     original_s3_key: Mapped[str | None] = mapped_column(Text)
     gltf_s3_key: Mapped[str | None] = mapped_column(Text)
+
+    # 3-layer viewer support (skeleton = gltf_s3_key above, these two are
+    # the additional layers). Both nullable — a project can have just a
+    # skeleton with no envelope/interior uploaded yet, viewer.html already
+    # handles that gracefully.
+    envelope_s3_key: Mapped[str | None] = mapped_column(Text)
+    interior_s3_key: Mapped[str | None] = mapped_column(Text)
+
     source_type: Mapped[ModelSourceType | None] = mapped_column(
         Enum(ModelSourceType, name="model_source_type")
     )

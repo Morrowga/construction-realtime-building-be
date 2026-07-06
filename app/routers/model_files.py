@@ -1,7 +1,8 @@
 # app/routers/model_files.py
 import uuid
+from typing import Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +29,8 @@ _SOURCE_FOR_EXT = {
 # Extensions that are ready to use immediately — no Celery parse job needed
 _NO_PARSE_EXTS = {".glb", ".gltf"}
 
+FileType = Literal["skeleton", "envelope", "interior"]
+
 
 async def _get_or_create_model_file(db: AsyncSession, project_id: uuid.UUID) -> ModelFile:
     result = await db.execute(select(ModelFile).where(ModelFile.project_id == project_id))
@@ -43,12 +46,24 @@ async def _get_or_create_model_file(db: AsyncSession, project_id: uuid.UUID) -> 
 async def upload_model_file(
     project_id: uuid.UUID,
     file: UploadFile = File(...),
+    file_type: FileType = Form("skeleton"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ModelFile:
-    """Admin uploads an IFC, PDF, GLB, or GLTF file.
-    IFC and PDF are parsed asynchronously via Celery.
-    GLB and GLTF are stored directly as the GLTF model — no parsing needed.
+    """Admin uploads a model file for one of three viewer layers.
+
+    file_type defaults to "skeleton" for backward compatibility — existing
+    callers (seed.py, any client not yet updated) that don't send file_type
+    at all get EXACTLY the old behavior: IFC/PDF/GLB/GLTF all accepted,
+    IFC/PDF parsed asynchronously via Celery, GLB/GLTF stored immediately
+    as the primary gltf_s3_key.
+
+    file_type="envelope" or "interior" only accept GLB/GLTF — IFC/PDF
+    parsing only ever made sense for the primary structural model, not
+    the two additional viewer layers — and write to their own dedicated
+    column instead of touching gltf_s3_key/parse_status/source_type at
+    all, so uploading an envelope layer can never clobber the skeleton's
+    parse state or vice versa.
     """
     await check_project_access(db, project_id, current_user, allowed_project_roles={"manager"})
 
@@ -59,6 +74,13 @@ async def upload_model_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Only .ifc, .pdf, .glb, and .gltf files are supported",
         )
+
+    if file_type != "skeleton" and ext not in _NO_PARSE_EXTS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{file_type} only supports .glb or .gltf files — IFC/PDF parsing is skeleton-only",
+        )
+
     source_type, content_type = _SOURCE_FOR_EXT[ext]
 
     contents = await file.read()
@@ -70,6 +92,23 @@ async def upload_model_file(
 
     model_file = await _get_or_create_model_file(db, project_id)
 
+    if file_type == "envelope":
+        key = f"projects/{project_id}/model/envelope{ext}"
+        await s3_service.upload_file(contents, key, content_type)
+        model_file.envelope_s3_key = key
+        await db.commit()
+        await db.refresh(model_file)
+        return model_file
+
+    if file_type == "interior":
+        key = f"projects/{project_id}/model/interior{ext}"
+        await s3_service.upload_file(contents, key, content_type)
+        model_file.interior_s3_key = key
+        await db.commit()
+        await db.refresh(model_file)
+        return model_file
+
+    # file_type == "skeleton" — original behavior, unchanged
     key = f"projects/{project_id}/model/original{ext}"
     await s3_service.upload_file(contents, key, content_type)
 
@@ -100,7 +139,9 @@ async def get_model_file(
     project=Depends(require_project_member()),
     db: AsyncSession = Depends(get_db),
 ) -> ModelFileOut:
-    """Get model file status plus a pre-signed GLTF URL when available."""
+    """Get model file status plus pre-signed URLs for whichever of the
+    three layers (skeleton/envelope/interior) have actually been uploaded.
+    """
     result = await db.execute(select(ModelFile).where(ModelFile.project_id == project.id))
     model_file = result.scalar_one_or_none()
     if model_file is None:
@@ -111,6 +152,10 @@ async def get_model_file(
     out = ModelFileOut.model_validate(model_file)
     if model_file.gltf_s3_key:
         out.gltf_url = await s3_service.generate_presigned_url(model_file.gltf_s3_key)
+    if model_file.envelope_s3_key:
+        out.envelope_url = await s3_service.generate_presigned_url(model_file.envelope_s3_key)
+    if model_file.interior_s3_key:
+        out.interior_url = await s3_service.generate_presigned_url(model_file.interior_s3_key)
     return out
 
 
