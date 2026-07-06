@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>サクラレジデンス — 3D進捗ビューアー</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e;
+    --green: #2ea043; --green-glow: #39d353;
+    --blue: #1f6feb; --blue-glow: #388bfd;
+    --grey: #484f58; --amber: #d29922;
+  }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Hiragino Sans", "Yu Gothic", sans-serif;
+    height: 100vh; overflow: hidden;
+    display: grid;
+    grid-template-columns: 220px 1fr 260px;
+    grid-template-rows: 52px 1fr 160px;
+  }
+  header {
+    grid-column: 1/-1; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 20px; gap: 12px;
+  }
+  header h1 { font-size: 15px; font-weight: 600; }
+  .sub { font-size: 11px; color: var(--muted); }
+  #overall-pct { font-size: 22px; font-weight: 700; margin-left: 12px; }
+  #overall-label { font-size: 11px; color: var(--muted); }
+  .layer-toggle {
+    display: flex; gap: 3px; margin-left: 20px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 3px;
+  }
+  .lb {
+    font-size: 11px; padding: 4px 10px; border: none;
+    border-radius: 4px; cursor: pointer; font-family: inherit;
+    background: none; color: var(--muted); transition: all .15s;
+  }
+  .lb.active { background: var(--blue); color: #fff; }
+  .lb:disabled { opacity: .35; cursor: not-allowed; }
+  .ws-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--grey); margin-left: auto; flex-shrink: 0; }
+  .ws-lbl { font-size: 11px; color: var(--muted); }
+
+  #floor-nav {
+    background: var(--surface); border-right: 1px solid var(--border);
+    padding: 12px 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .fb {
+    display: flex; align-items: center; padding: 8px 16px;
+    cursor: pointer; border: none; background: none;
+    color: var(--muted); font-size: 13px; font-family: inherit;
+    gap: 8px; transition: background .1s, color .1s; text-align: left;
+  }
+  .fb:hover { background: rgba(255,255,255,.04); color: var(--text); }
+  .fb.active { background: rgba(31,111,235,.15); color: var(--blue-glow); }
+  .fn { font-weight: 600; font-size: 14px; min-width: 32px; }
+  .fbar { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .ffill { height: 100%; border-radius: 2px; transition: width .5s ease; }
+  .fnum { font-size: 11px; min-width: 32px; text-align: right; }
+
+  #canvas-wrap { position: relative; overflow: hidden; }
+  #three-canvas { display: block; width: 100%; height: 100%; }
+
+  #legend {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(22,27,34,.9); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .leg { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+  .ldot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+  #view-controls {
+    position: absolute; bottom: 12px; left: 12px; display: flex; gap: 6px;
+  }
+  .vb {
+    background: rgba(22,27,34,.85); border: 1px solid var(--border);
+    color: var(--muted); font-size: 11px; padding: 5px 10px;
+    border-radius: 6px; cursor: pointer; font-family: inherit;
+  }
+  .vb:hover, .vb.active { color: var(--text); border-color: var(--blue); }
+
+  #loading-overlay {
+    position: absolute; inset: 0; background: var(--bg);
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 10px; transition: opacity .4s;
+  }
+  #loading-overlay.hidden { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 34px; height: 34px; border: 3px solid var(--border);
+    border-top-color: var(--blue-glow); border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #ltxt { font-size: 13px; color: var(--muted); }
+  #lsub { font-size: 10px; color: var(--grey); max-width: 320px; text-align: center; word-break: break-all; }
+
+  #detail-panel {
+    background: var(--surface); border-left: 1px solid var(--border);
+    padding: 16px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .plbl { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .zname { font-size: 16px; font-weight: 700; }
+  .zmesh { font-size: 11px; color: var(--muted); font-family: monospace; }
+  .bigpct { font-size: 36px; font-weight: 800; line-height: 1; }
+  .pbar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .pfill { height: 100%; border-radius: 3px; transition: width .5s ease; }
+  .trow { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .tdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .tname { flex: 1; color: var(--muted); }
+  .tpct { font-size: 11px; font-weight: 600; min-width: 30px; text-align: right; }
+  .tmbar { width: 50px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .tmfill { height: 100%; border-radius: 2px; }
+  .frow { display: flex; gap: 5px; flex-wrap: wrap; }
+  .fchip {
+    font-size: 10px; padding: 2px 7px; border-radius: 4px;
+    border: 1px solid var(--border); color: var(--muted);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .fsw { width: 9px; height: 9px; border-radius: 2px; border: 1px solid rgba(255,255,255,.12); }
+  .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 20px 0; }
+
+  #photo-strip {
+    grid-column: 1/-1; background: var(--surface);
+    border-top: 1px solid var(--border); padding: 12px 16px;
+    display: flex; gap: 10px; align-items: center; overflow-x: auto;
+  }
+  .slbl { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .pthumb {
+    width: 120px; height: 80px; border-radius: 6px; object-fit: cover;
+    border: 1px solid var(--border); flex-shrink: 0; cursor: pointer;
+  }
+  .pthumb:hover { border-color: var(--blue); }
+  .pmeta { font-size: 10px; color: var(--muted); white-space: nowrap; }
+  .noph { font-size: 12px; color: var(--muted); }
+
+
+</style>
+</head>
+<body>
+
+
+
+<header>
+  <h1 id="pname">サクラレジデンス新築工事</h1>
+  <span class="sub" id="lupd"></span>
+  <span id="overall-pct">—%</span>
+  <span id="overall-label">全体進捗率</span>
+  <div class="layer-toggle">
+    <button class="lb active" id="lb-progress" onclick="setMode('progress')">進捗</button>
+    <button class="lb" id="lb-skeleton" onclick="setMode('skeleton')">骨格</button>
+    <button class="lb" id="lb-finished" onclick="setMode('finished')" disabled>完成図</button>
+  </div>
+  <span class="ws-dot" id="wsdot"></span>
+  <span class="ws-lbl" id="wslbl">未接続</span>
+</header>
+
+<nav id="floor-nav"></nav>
+
+<div id="canvas-wrap">
+  <canvas id="three-canvas"></canvas>
+  <div id="legend">
+    <div class="leg"><div class="ldot" style="background:#2ea043"></div>完了 100%</div>
+    <div class="leg"><div class="ldot" style="background:#1f6feb"></div>施工中 1–99%</div>
+    <div class="leg"><div class="ldot" style="background:#30363d;border:1px solid #484f58"></div>未着手 0%</div>
+    <div class="leg"><div class="ldot" style="background:#3a3a4a;border:1px dashed #555"></div>構造・家具</div>
+  </div>
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <div id="ltxt">接続中...</div>
+    <div id="lsub"></div>
+  </div>
+  <div id="view-controls">
+    <button class="vb active" onclick="setView('iso',this)">アイソメ</button>
+    <button class="vb" onclick="setView('top',this)">上面</button>
+    <button class="vb" onclick="setView('front',this)">正面</button>
+    <button class="vb" onclick="resetCam()">リセット</button>
+  </div>
+</div>
+
+<div id="detail-panel">
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <div class="plbl">選択中のゾーン</div>
+    <div class="empty">ゾーンをクリックして<br>詳細を表示</div>
+  </div>
+</div>
+
+<div id="photo-strip">
+  <span class="slbl">📷 最新の現場写真</span>
+  <span class="noph">ゾーンを選択すると写真が表示されます</span>
+</div>
+
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── State ──────────────────────────────────────────────────────────────────
+let API='', TOKEN='', PID='';
+let progress=null, ws=null;
+let scene, cam, renderer, ctrl;
+
+// Mesh registries
+let skelMeshes={};    // meshId → Mesh  (skeleton — always visible)
+let envMeshes={};     // meshId → Mesh  (envelope — exterior shell)
+let intMeshes={};     // meshId → Mesh  (interior — room surfaces)
+let finMeshes={};     // meshId → Mesh  (finished — legacy fallback)
+let finishMap={};     // meshId → finish_data from API
+let zoneIds=new Set();// mesh IDs that are actual progress zones
+
+let selId=null, mode='progress', activeFloor=null;
+let signalMap={};
+
+// ── Camera auto-fit state ────────────────────────────────────────────────
+// PREVIOUSLY the camera used hardcoded position/target numbers tuned by
+// eye for one specific building (サクラレジデンス's exact dimensions).
+// Now that multiple organizations each upload their own GLBs at whatever
+// real-world scale/position they modeled at, those fixed numbers would
+// frame the next org's building either too close, too far, or looking at
+// empty space. fitCenter/fitDistance get computed from the actual loaded
+// geometry's bounding box in autoFitCamera() below, and every view preset
+// (iso/top/front/reset) scales off these instead of magic numbers.
+let fitCenter = new THREE.Vector3(6, 10, 5);   // sensible fallback until autofit runs
+let fitDistance = 39;                           // matches old hardcoded framing by default
+
+// Relative view directions, normalized — derived from the OLD hardcoded
+// iso/top/front camera offsets so the framing angles feel the same, just
+// now scaled by fitDistance instead of being fixed absolute numbers.
+const VIEW_DIRS = {
+  iso:   new THREE.Vector3(0.614, 0.461, 0.640),
+  top:   new THREE.Vector3(0, 1, 0.0002),
+  front: new THREE.Vector3(0, 0.124, 0.992),
+};
+
+function autoFitCamera(padding = 1.35) {
+  const box = new THREE.Box3();
+  let hasAny = false;
+  for (const mesh of [
+    ...Object.values(skelMeshes), ...Object.values(envMeshes),
+    ...Object.values(intMeshes), ...Object.values(finMeshes),
+  ]) {
+    box.expandByObject(mesh);
+    hasAny = true;
+  }
+  if (!hasAny) return; // nothing loaded — keep fallback framing
+
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const fovRad = cam.fov * (Math.PI / 180);
+  const distance = (maxDim / 2 / Math.tan(fovRad / 2)) * padding;
+
+  fitCenter.copy(center);
+  fitDistance = distance;
+
+  cam.near = Math.max(distance / 100, 0.1);
+  cam.far = distance * 10;
+  cam.updateProjectionMatrix();
+
+  cam.position.copy(fitCenter).add(VIEW_DIRS.iso.clone().multiplyScalar(fitDistance));
+  cam.lookAt(fitCenter);
+
+  ctrl.target.copy(fitCenter);
+  ctrl.minDistance = distance * 0.08;
+  ctrl.maxDistance = distance * 4;
+  ctrl.update();
+}
+
+// ── Mesh classification ────────────────────────────────────────────────────
+// Determines how each mesh in finished.glb / envelope.glb / interior.glb behaves
+
+function meshRole(id) {
+  const base = id.replace(/_\d+$/, '');
+  if (id.startsWith('Furniture_')) return 'furniture';
+  if (id.startsWith('Envelope_')) return 'envelope';
+  if (id.startsWith('Zone_') || zoneIds.has(id) || zoneIds.has(base)) return 'zone';
+  if (id.startsWith('Structure_Slab') && (signalMap[id] || signalMap[base])) return 'zone';
+  if (id.startsWith('Structure_') || id === 'Site_Ground') return 'structure';
+  return 'structure';
+}
+
+// For furniture, derive the parent zone mesh id
+// e.g. Furniture_Lobby_1F → Zone_Lobby_1F
+function furnitureParent(id) {
+  return id.replace('Furniture_', 'Zone_');
+}
+
+// ── Colours ────────────────────────────────────────────────────────────────
+// NOTE: 3D geometry is coloured by STATUS ONLY (green/amber/grey).
+// Trade/category colours (CAT_COLOR below) are used only in the side-panel
+// task list — a wall can't visually "look like" electrical wiring, so we
+// don't try to paint that onto meshes anymore.
+const C = {
+  done:      new THREE.Color(0x2ea043),
+  wip:       new THREE.Color(0x1f6feb),
+  none:      new THREE.Color(0x333a44),
+  skel:      new THREE.Color(0x52586a),
+  structure: new THREE.Color(0x44495a),
+  ground:    new THREE.Color(0x1a1e26),
+};
+const E = {
+  done:  new THREE.Color(0x0d2b0d),
+  wip:   new THREE.Color(0x091525),
+  zero:  new THREE.Color(0x101418),
+  skel:  new THREE.Color(0x0a0c12),
+};
+
+function pctColor(p)    { return p>=100?C.done:p>0?C.wip:C.none; }
+function pctEmissive(p) { return p>=100?E.done:p>0?E.wip:E.zero; }
+function hexC(h)        { return new THREE.Color(h||'#999'); }
+
+// ── Three setup ────────────────────────────────────────────────────────────
+function initThree() {
+  const cv = document.getElementById('three-canvas');
+  const wr = document.getElementById('canvas-wrap');
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xF5F0E8);
+  scene.fog = new THREE.FogExp2(0xF5F0E8, .012);
+
+  cam = new THREE.PerspectiveCamera(45, wr.clientWidth/wr.clientHeight, .1, 300);
+  cam.position.copy(fitCenter).add(VIEW_DIRS.iso.clone().multiplyScalar(fitDistance));
+
+  renderer = new THREE.WebGLRenderer({ canvas:cv, antialias:true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(wr.clientWidth, wr.clientHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+
+  // Lights
+  scene.add(new THREE.AmbientLight(0xffffff, .85));
+
+  const sun = new THREE.DirectionalLight(0xffffff, 1.3);
+  sun.position.set(25, 45, 20);
+  sun.intensity = 1.8;
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  scene.add(sun);
+
+  const fill = new THREE.DirectionalLight(0x8899ff, .3);
+  fill.position.set(-15, 10, -15);
+  scene.add(fill);
+
+  const warm = new THREE.PointLight(0xffcc88, .4, 35);
+  warm.position.set(6, 8, 5);
+  scene.add(warm);
+
+  scene.add(new THREE.GridHelper(80, 40, 0xD4C8B8, 0xD4C8B8));
+
+  ctrl = new OrbitControls(cam, renderer.domElement);
+  ctrl.enableDamping = true;
+  ctrl.dampingFactor = .07;
+  ctrl.minDistance = 4;
+  ctrl.maxDistance = 100;
+  ctrl.maxPolarAngle = Math.PI / 2.05;
+  ctrl.target.copy(fitCenter);
+  cam.lookAt(fitCenter);
+
+  new ResizeObserver(() => {
+    cam.aspect = wr.clientWidth / wr.clientHeight;
+    cam.updateProjectionMatrix();
+    renderer.setSize(wr.clientWidth, wr.clientHeight);
+  }).observe(wr);
+
+  (function loop() { requestAnimationFrame(loop); ctrl.update(); renderer.render(scene, cam); })();
+
+  // ── Raycaster ──────────────────────────────────────────────────────────
+  // Priority: interior surfaces → skeleton zones → finished(legacy).
+  // Envelope + pure structure are walked THROUGH (not selectable) so a click
+  // on the outer shell doesn't just fail silently — instead it falls back
+  // to a floor-level summary if nothing sits behind it.
+  const ray = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  cv.addEventListener('click', e => {
+    const r = cv.getBoundingClientRect();
+    mouse.x =  ((e.clientX - r.left) / r.width)  * 2 - 1;
+    mouse.y = -((e.clientY - r.top)  / r.height) * 2 + 1;
+    ray.setFromCamera(mouse, cam);
+
+    const allMeshes = [
+      ...Object.values(intMeshes),
+      ...Object.values(skelMeshes),
+      ...Object.values(finMeshes),
+      ...Object.values(envMeshes),
+    ].filter(m => m.visible && m.material.opacity > .05);
+
+    const hits = ray.intersectObjects(allMeshes, false);
+    if (!hits.length) return;
+
+    for (const hit of hits) {
+      const id = hit.object.userData.meshId;
+      const role = meshRole(id);
+      if (role === 'structure' || role === 'furniture' || role === 'envelope') continue;
+      selectMesh(id);
+      return;
+    }
+
+    // Nothing but shell/structure was hit — fall back to a floor summary
+    const envHit = hits.find(h => meshRole(h.object.userData.meshId) === 'envelope');
+    if (envHit) {
+      const floorName = envelopeFloor(envHit.object.userData.meshId)
+        || (envHit.object.userData.meshId.includes('Roof') ? 'RF'
+        : envHit.object.userData.meshId.includes('Door') ? '1F' : null);
+      if (floorName) { selectFloorSummary(floorName); return; }
+    }
+    showStructureInfo(hits[0].object.userData.meshId);
+  });
+}
+
+// ── GLB loader ─────────────────────────────────────────────────────────────
+function loadGLB(url, map, label) {
+  return new Promise((res, rej) => {
+    new GLTFLoader().load(url, gltf => {
+      gltf.scene.traverse(o => {
+        if (o.isMesh) {
+          o.userData.meshId = o.name;
+          o.castShadow = o.receiveShadow = true;
+          o.material = o.material.clone();
+          o.material.transparent = true;
+          map[o.name] = o;
+        }
+      });
+      scene.add(gltf.scene); res();
+    },
+    xhr => setLoad(`${label}読み込み中... ${xhr.total ? Math.round(xhr.loaded/xhr.total*100) : '?'}%`, ''),
+    rej);
+  });
+}
+
+// ── Rendering — the core two-layer logic ───────────────────────────────────
+function buildPctMap() {
+  const m = {};
+  if (!progress) return m;
+  for (const f of progress.floors) for (const z of f.zones) m[z.mesh_id] = z.pct;
+  return m;
+}
+
+function buildSignalMap() {
+  const m = {};
+  if (!progress) return m;
+  for (const f of progress.floors) {
+    for (const z of f.zones) {
+      const sig = z.colour_signal || (z.pct >= 100 ? 'green' : z.pct > 0 ? 'amber' : 'grey');
+      m[z.mesh_id] = sig;
+      for (let i = 1; i <= 5; i++) m[z.mesh_id + '_' + i] = sig;
+    }
+  }
+  return m;
+}
+
+function buildCategoryMap() {
+  // mesh_id → active_layer_category. Kept for the side-panel task list only
+  // (task dot colours) — no longer used to drive 3D mesh colour.
+  const m = {};
+  if (!progress) return m;
+  for (const f of progress.floors) {
+    for (const z of f.zones) {
+      const cat = z.active_layer_category || null;
+      m[z.mesh_id] = cat;
+      for (let i = 1; i <= 5; i++) m[z.mesh_id + '_' + i] = cat;
+    }
+  }
+  return m;
+}
+
+const SIG_COLOR    = { green: new THREE.Color(0x4a9e6a), amber: new THREE.Color(0xc8973a), grey: new THREE.Color(0x4a5060) };
+const SIG_EMISSIVE = { green: new THREE.Color(0x0a1a0f), amber: new THREE.Color(0x150e00), grey: new THREE.Color(0x080a0c) };
+
+// Category → colour mapping — used ONLY for the small task-row dot in the
+// side panel (see renderPanel). Never applied to 3D geometry: trades like
+// electrical/plumbing have no meaningful visual representation on a wall.
+const CAT_COLOR = {
+  rebar:          new THREE.Color(0x8B4513),
+  formwork:       new THREE.Color(0x8B7355),
+  structural:     new THREE.Color(0x707880),
+  concrete:       new THREE.Color(0x909090),
+  waterproofing:  new THREE.Color(0x4A7FA5),
+  insulation:     new THREE.Color(0xD4A84B),
+  plumbing:       new THREE.Color(0x3A9080),
+  electrical:     new THREE.Color(0xE8C040),
+  tiling:         new THREE.Color(0xC8B89A),
+  painting:       new THREE.Color(0xE0D5C5),
+  glazing:        new THREE.Color(0x88BBDD),
+  fixtures:       new THREE.Color(0xD0C0A8),
+  roofing:        new THREE.Color(0x606870),
+  finishing:      new THREE.Color(0xEAE0D0),
+  other:          new THREE.Color(0x909090),
+};
+
+// Build floor signal map for envelope colouring
+function buildFloorSignalMap() {
+  const m = {};
+  if (!progress) return m;
+  for (const f of progress.floors) {
+    m[f.name] = f.pct >= 100 ? 'green' : f.pct > 0 ? 'amber' : 'grey';
+  }
+  return m;
+}
+
+function envelopeFloor(id) {
+  const match = id.match(/_(\d+F|RF|基礎)$/);
+  return match ? match[1] : null;
+}
+
+function render() {
+  const pm = buildPctMap();
+  const sm = buildSignalMap();
+  const cm = buildCategoryMap();
+  const fm = buildFloorSignalMap();
+  signalMap = sm;
+
+  for (const [id, mesh] of Object.entries(skelMeshes)) {
+    const signal = sm[id] || 'grey';
+    if (mode === 'finished') { mesh.visible = false; continue; }
+    if (mode === 'skeleton') {
+      mesh.visible = true; mesh.material.color.copy(C.skel);
+      mesh.material.emissive.copy(E.skel); mesh.material.opacity = .92; continue;
+    }
+    if (signal === 'green') {
+      const isTrackedZone = zoneIds.has(id) || zoneIds.has(id.replace(/_\d+$/, ''));
+      if (isTrackedZone) {
+        mesh.visible = true; mesh.material.opacity = 0.9;
+        mesh.material.color.copy(SIG_COLOR.green);
+        mesh.material.emissive.copy(SIG_EMISSIVE.green);
+      } else {
+        mesh.visible = false;
+      }
+    } else if (signal === 'amber') {
+      const isTrackedZone = zoneIds.has(id) || zoneIds.has(id.replace(/_\d+$/, ''));
+      if (isTrackedZone) {
+        // Status colour only — no trade/category colour on geometry
+        mesh.visible = true; mesh.material.opacity = 0.9;
+        mesh.material.color.copy(SIG_COLOR.amber);
+        mesh.material.emissive.copy(SIG_EMISSIVE.amber);
+      } else {
+        mesh.visible = true; mesh.material.color.set(0x3a4050);
+        mesh.material.emissive.set(0x000000); mesh.material.opacity = .15;
+      }
+    } else {
+      mesh.visible = true; mesh.material.color.copy(C.skel);
+      mesh.material.emissive.copy(E.skel); mesh.material.opacity = .88;
+    }
+  }
+
+  // ── Envelope layer — exterior shell coloured by floor STATUS only ──
+  for (const [id, mesh] of Object.entries(envMeshes)) {
+    if (mode === 'skeleton') { mesh.visible = false; continue; }
+    const floorName = envelopeFloor(id);
+    const resolvedFloor = floorName || (id.includes('Roof') ? 'RF' : id.includes('Door') ? '1F' : null);
+    const signal = resolvedFloor ? (fm[resolvedFloor] || 'grey') : 'grey';
+    if (mode === 'finished') {
+      mesh.visible = true; mesh.material.opacity = 1.0;
+      mesh.material.color.set(0xD8CFC0); mesh.material.emissive.set(0x080807);
+      continue;
+    }
+    if (signal === 'green') {
+      mesh.visible = true; mesh.material.opacity = 1.0;
+      mesh.material.color.set(0xD4C4A8);
+      mesh.material.emissive.set(0x2A2418);
+      mesh.material.roughness = 0.8;
+    } else if (signal === 'amber') {
+      mesh.visible = true; mesh.material.opacity = 1.0;
+      mesh.material.color.copy(SIG_COLOR.amber);
+      mesh.material.emissive.copy(SIG_COLOR.amber).multiplyScalar(0.15);
+      mesh.material.roughness = 0.85;
+    } else {
+      mesh.visible = false;
+    }
+    mesh.renderOrder = 1;
+    mesh.material.polygonOffset = true;
+    mesh.material.polygonOffsetFactor = -1;
+    mesh.material.polygonOffsetUnits = -1;
+  }
+
+  // ── Interior layer — room surfaces coloured by zone STATUS only ──
+  for (const [id, mesh] of Object.entries(intMeshes)) {
+    if (mode === 'skeleton') { mesh.visible = false; continue; }
+    const base   = id.replace(/_\d+$/, '');
+    const signal = sm[id] || sm[base] || 'grey';
+    const pct    = pm[id] ?? pm[base] ?? 0;
+    if (mode === 'finished') {
+      mesh.visible = true; mesh.material.opacity = 1.0;
+      applyFinishMat(mesh, finishMap[id] || finishMap[base]); continue;
+    }
+    if (signal === 'green') {
+      mesh.visible = true; mesh.material.opacity = 1.0;
+      applyFinishMat(mesh, finishMap[id] || finishMap[base]);
+    } else if (signal === 'amber') {
+      mesh.visible = true; mesh.material.opacity = 0.5 + (pct / 100) * 0.4;
+      mesh.material.color.copy(SIG_COLOR.amber);
+      mesh.material.emissive.set(0x050400);
+    } else { mesh.visible = false; }
+    mesh.renderOrder = 2;
+    mesh.material.polygonOffset = true;
+    mesh.material.polygonOffsetFactor = -2;
+    mesh.material.polygonOffsetUnits = -2;
+  }
+
+  for (const [id, mesh] of Object.entries(finMeshes)) {
+    const role   = meshRole(id);
+    const signal = sm[id] || (role === 'furniture' ? sm[furnitureParent(id)] : 'grey') || 'grey';
+    const pct    = pm[id] ?? pm[furnitureParent(id)] ?? 0;
+
+    if (mode === 'skeleton') { mesh.visible = false; continue; }
+
+    if (role === 'structure') {
+      mesh.visible = true;
+      mesh.material.color.set(id === 'Site_Ground' ? 0x2a2e38 : 0x6a6e78);
+      mesh.material.emissive.set(0x080a0e);
+      mesh.material.opacity = mode === 'finished' ? .85 : .3;
+      continue;
+    }
+
+    if (role === 'furniture') {
+      mesh.visible = false;
+      continue;
+    }
+
+    if (mode === 'finished') {
+      mesh.visible = true; mesh.material.opacity = 1.0;
+      applyFinishMat(mesh, finishMap[id]); continue;
+    }
+    if (signal === 'green') {
+      mesh.visible = true; mesh.material.opacity = 1.0;
+      const fd = finishMap[id];
+      const col = fd?.floor?.color || fd?.wall?.color || '';
+      const isNeutral = !col || col === '#888888' || col === '#AAAAAA' || col === '#555555';
+      if (isNeutral) {
+        mesh.material.color.copy(SIG_COLOR.green);
+        mesh.material.emissive.copy(SIG_EMISSIVE.green);
+      } else {
+        applyFinishMat(mesh, fd);
+      }
+    } else if (signal === 'amber') {
+      mesh.visible = true;
+      mesh.material.opacity = .55 + (pct / 100) * .35;
+      mesh.material.color.copy(SIG_COLOR.amber);
+      mesh.material.emissive.set(0x050505);
+    } else {
+      mesh.visible = false;
+    }
+  }
+}
+
+function applyFinishMat(mesh, fd) {
+  const col = fd?.floor?.color || fd?.wall?.color || '#C8A882';
+  mesh.material.color.copy(hexC(col));
+  mesh.material.emissive.copy(hexC(col)).multiplyScalar(.07);
+}
+
+// ── Floor filter ───────────────────────────────────────────────────────────
+function applyFloorFilter() {
+  if (!activeFloor) { render(); return; }
+  render();  // apply base colours first
+
+  const fl = progress.floors.find(f => f.floor_id === activeFloor);
+  const activeIds = new Set(fl ? fl.zones.map(z => z.mesh_id) : []);
+  const activeFloorName = fl ? fl.name : null;
+
+  // Skeleton — fade non-active floor
+  for (const [id, m] of Object.entries(skelMeshes)) {
+    if (!activeIds.has(id)) { m.material.opacity = .04; }
+  }
+
+  // Interior — hide non-active floor zones entirely
+  for (const [id, m] of Object.entries(intMeshes)) {
+    const base = id.replace(/_\d+$/, '');
+    if (!activeIds.has(id) && !activeIds.has(base)) { m.visible = false; }
+  }
+
+  // Envelope — hide shell panels belonging to other floors
+  for (const [id, m] of Object.entries(envMeshes)) {
+    const floorName = envelopeFloor(id)
+      || (id.includes('Roof') ? 'RF' : id.includes('Door') ? '1F' : null);
+    if (floorName !== activeFloorName) { m.visible = false; }
+  }
+
+  // Legacy finished layer
+  for (const [id, m] of Object.entries(finMeshes)) {
+    const role = meshRole(id);
+    if (role === 'structure') continue; // always show structure
+    const checkId = role === 'furniture' ? furnitureParent(id) : id;
+    if (!activeIds.has(checkId)) { m.visible = false; }
+  }
+}
+
+// ── Layer mode ─────────────────────────────────────────────────────────────
+window.setMode = m => {
+  mode = m;
+  document.querySelectorAll('.lb').forEach(b => b.classList.remove('active'));
+  document.getElementById('lb-' + m).classList.add('active');
+  activeFloor ? applyFloorFilter() : render();
+};
+
+// ── Floor nav ──────────────────────────────────────────────────────────────
+function buildFloorNav(floors) {
+  const nav = document.getElementById('floor-nav');
+  nav.innerHTML = '';
+
+  const allBtn = document.createElement('button');
+  allBtn.className = 'fb active';
+  allBtn.innerHTML = '<span class="fn">全体</span>';
+  allBtn.onclick = () => {
+    activeFloor = null;
+    nav.querySelectorAll('.fb').forEach(b => b.classList.remove('active'));
+    allBtn.classList.add('active');
+    render();
+  };
+  nav.appendChild(allBtn);
+
+  for (const f of [...floors].reverse()) {
+    const col = f.pct >= 100 ? 'var(--green)' : f.pct > 0 ? 'var(--blue)' : 'var(--grey)';
+    const btn = document.createElement('button');
+    btn.className = 'fb';
+    btn.innerHTML = `
+      <span class="fn">${f.name}</span>
+      <span class="fbar"><span class="ffill" style="width:${f.pct}%;background:${col}"></span></span>
+      <span class="fnum" style="color:${col}">${f.pct.toFixed(0)}%</span>`;
+    btn.onclick = () => {
+      activeFloor = f.floor_id;
+      nav.querySelectorAll('.fb').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      applyFloorFilter();
+    };
+    nav.appendChild(btn);
+  }
+}
+
+// ── Zone selection ─────────────────────────────────────────────────────────
+function selectMesh(id) {
+  // If furniture clicked, redirect to parent zone
+  if (meshRole(id) === 'furniture') id = furnitureParent(id);
+  if (meshRole(id) === 'structure') { showStructureInfo(id); return; }
+
+  selId = id;
+  const zone = findZone(id);
+  renderPanel(zone, id);
+  if (zone) loadPhotos(zone);
+
+  // Pulse highlight
+  const m = intMeshes[id] || finMeshes[id] || skelMeshes[id];
+  if (m) {
+    const e = m.material.emissive.clone();
+    m.material.emissive.set(0x223366);
+    setTimeout(() => m.material.emissive.copy(e), 250);
+  }
+}
+
+function showStructureInfo(id) {
+  const panel = document.getElementById('detail-panel');
+  panel.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="plbl">構造要素</div>
+      <div class="zname">${id}</div>
+      <div class="zmesh">${id}</div>
+      <div class="empty" style="margin-top:8px">構造・共用部分<br>進捗追跡対象外</div>
+    </div>`;
+}
+
+// Fallback when only the outer envelope shell was hit — shows every zone
+// on that floor at a glance instead of leaving the panel empty.
+function selectFloorSummary(floorName) {
+  const fl = progress.floors.find(f => f.name === floorName);
+  const panel = document.getElementById('detail-panel');
+  if (!fl) {
+    panel.innerHTML = `<div class="plbl">選択中</div><div class="empty">データなし</div>`;
+    return;
+  }
+  const rows = fl.zones.map(z => {
+    const col = z.colour_signal === 'green' ? '#2ea043' : z.colour_signal === 'amber' ? '#d29922' : '#484f58';
+    return `<div class="trow" style="padding:4px 0">
+      <div class="tdot" style="background:${col}"></div>
+      <div class="tname">${z.name}</div>
+      <div class="tmbar"><div class="tmfill" style="width:${z.pct}%;background:${col}"></div></div>
+      <div class="tpct" style="color:${col}">${z.pct.toFixed(0)}%</div>
+    </div>`;
+  }).join('');
+  panel.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="plbl">外壁をクリック — 階概要</div>
+      <div class="zname">${floorName}</div>
+      <div class="bigpct" style="color:${fl.pct>=100?'var(--green-glow)':fl.pct>0?'var(--blue-glow)':'var(--grey)'}">${fl.pct.toFixed(1)}%</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div class="plbl">ゾーン (${fl.zones.length}) — 内部を回転すると個別選択できます</div>
+      ${rows}
+    </div>`;
+}
+
+function findZone(id) {
+  if (!progress) return null;
+  const baseId = id.replace(/_\d+$/, '');
+  for (const f of progress.floors) {
+    const z = f.zones.find(z => z.mesh_id === id || z.mesh_id === baseId);
+    if (z) return { ...z, floorName: f.name };
+  }
+  return null;
+}
+
+function renderPanel(zone, id) {
+  const panel = document.getElementById('detail-panel');
+  if (!zone) {
+    panel.innerHTML = `<div class="plbl">選択中</div><div class="zname">${id||'—'}</div><div class="empty">データなし</div>`;
+    return;
+  }
+  const col = zone.pct>=100?'var(--green-glow)':zone.pct>0?'var(--blue-glow)':'var(--grey)';
+  const st  = zone.pct>=100?'完了':zone.pct>0?'施工中':'未着手';
+  const fd  = finishMap[id] || {};
+
+  const fhtml = Object.entries(fd)
+    .filter(([,v]) => v && v.color)
+    .map(([k,v]) => `<div class="fchip"><div class="fsw" style="background:${v.color}"></div>${{floor:'床',wall:'壁',ceiling:'天井'}[k]||k}: ${v.type||''}</div>`)
+    .join('');
+
+  // Sort tasks by layer_order for display
+  const sortedTasks = [...zone.tasks].sort((a,b) => (a.layer_order||0)-(b.layer_order||0));
+
+  const thtml = sortedTasks.map((t,i) => {
+    const sig = t.colour_signal || (t.pct>=100?'green':t.pct>0?'amber':'grey');
+    // Task-row dot uses the TRADE colour (electrical/plumbing/etc.) — this is
+    // the one place category colour is shown, since it's a legend dot next
+    // to text, not paint on 3D geometry.
+    const catCol = CAT_COLOR[t.task_category];
+    const tc  = sig==='grey' ? 'var(--grey)' : (catCol ? '#'+catCol.getHexString() : (sig==='green'?'#2ea043':'#d29922'));
+    const bg  = sig==='green'?'rgba(46,160,67,.12)':sig==='amber'?'rgba(210,153,34,.12)':'transparent';
+    const isActive = sig === 'amber';
+    const badge = sig==='green'
+      ? `<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#2ea043;color:#fff">完了</span>`
+      : sig==='amber'
+      ? `<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#d29922;color:#fff">施工中</span>`
+      : `<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:var(--surface-0);color:var(--text-muted);border:0.5px solid var(--border)">未着手</span>`;
+    return `<div class="trow" style="background:${bg};border-radius:4px;padding:4px 6px;margin:0 -6px">
+      <div style="font-size:10px;color:var(--text-muted);min-width:14px">${t.layer_order||i+1}</div>
+      <div class="tdot" style="background:${tc}"></div>
+      <div class="tname">${t.task_name}${isActive?' ←':''}</div>
+      <div class="tmbar"><div class="tmfill" style="width:${t.pct}%;background:${tc}"></div></div>
+      <div class="tpct" style="color:${tc}">${t.pct.toFixed(0)}%</div>
+      ${badge}
+    </div>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="plbl">${zone.floorName} — ${st}</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="zname">${zone.name}</div>
+        <div style="width:9px;height:9px;border-radius:50%;background:${zone.colour_signal==='green'?'#2ea043':zone.colour_signal==='amber'?'#d29922':'#484f58'};flex-shrink:0"></div>
+      </div>
+      <div class="zmesh">${id}</div>
+      ${zone.colour_signal==='amber'&&zone.active_layer_name
+        ?`<div style="font-size:11px;padding:5px 8px;background:rgba(210,153,34,.12);border-radius:5px;border:0.5px solid rgba(210,153,34,.3);color:#d29922">施工中: ${zone.active_layer_name} ${(zone.active_layer_pct||zone.pct).toFixed(0)}%</div>`
+        :zone.pct>=100
+        ?`<div style="font-size:11px;padding:5px 8px;background:rgba(46,160,67,.1);border-radius:5px;border:0.5px solid rgba(46,160,67,.3);color:#2ea043">全工程完了</div>`
+        :''}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="plbl">全体進捗率</div>
+      <div class="bigpct" style="color:${col}">${zone.pct.toFixed(1)}%</div>
+      <div class="pbar"><div class="pfill" style="width:${zone.pct}%;background:${col}"></div></div>
+    </div>
+    ${fhtml ? `<div style="display:flex;flex-direction:column;gap:6px"><div class="plbl">仕上げ材</div><div class="frow">${fhtml}</div></div>` : ''}
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div class="plbl">工程 (${zone.tasks.length})</div>
+      ${thtml || '<div class="empty">工程なし</div>'}
+    </div>`;
+}
+
+// ── Photos ─────────────────────────────────────────────────────────────────
+async function loadPhotos(zone) {
+  const s = document.getElementById('photo-strip');
+  s.innerHTML = `<span class="slbl">📷 ${zone.name}</span><span class="noph">読み込み中...</span>`;
+  const photos = [];
+  for (const t of zone.tasks) {
+    try {
+      const r = await api(`/api/v1/reports?zone_task_id=${t.zone_task_id}&status=approved&limit=3`);
+      if (r?.items) for (const rp of r.items) for (const ph of rp.photos||[]) photos.push({url:ph.s3_url, date:rp.submitted_at});
+    } catch(_) {}
+  }
+  if (!photos.length) {
+    s.innerHTML = `<span class="slbl">📷 ${zone.name}</span><span class="noph">写真なし</span>`;
+    return;
+  }
+  s.innerHTML = `<span class="slbl">📷 ${zone.name}</span>`;
+  for (const ph of photos.slice(0, 10)) {
+    const d = new Date(ph.date).toLocaleDateString('ja-JP', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    const w = document.createElement('div');
+    w.style.cssText = 'display:flex;flex-direction:column;gap:3px;flex-shrink:0';
+    w.innerHTML = `<img class="pthumb" src="${ph.url}" onerror="this.style.display='none'"><span class="pmeta">${d}</span>`;
+    s.appendChild(w);
+  }
+}
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+function connectWS() {
+  ws = new WebSocket(API.replace(/^http/, 'ws') + `/ws/${PID}?token=${TOKEN}`);
+  ws.onopen = () => {
+    document.getElementById('wsdot').style.cssText = 'background:var(--green);box-shadow:0 0 6px var(--green-glow)';
+    document.getElementById('wslbl').textContent = 'リアルタイム接続中';
+  };
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+
+    if (msg.type === 'progress_update' && progress) {
+      for (const f of progress.floors) for (const z of f.zones) {
+        if (z.zone_id === msg.zone_id) {
+          z.pct = msg.new_pct;
+          z.colour_signal = msg.colour_signal || (msg.new_pct >= 100 ? 'green' : msg.new_pct > 0 ? 'amber' : 'grey');
+          z.active_layer_name = msg.active_layer_name;
+          z.active_layer_pct  = msg.active_layer_pct;
+        }
+      }
+      activeFloor ? applyFloorFilter() : render();
+      buildFloorNav(progress.floors);
+      if (selId) renderPanel(findZone(selId), selId);
+      const sigEmoji = msg.colour_signal === 'green' ? '🟢' : msg.colour_signal === 'amber' ? '🟡' : '⚪';
+      toast(`${sigEmoji} ${msg.active_layer_name || '進捗'} → ${msg.new_pct?.toFixed(0)}%`);
+    }
+
+    if (msg.type === 'progress_rollback' && progress) {
+      for (const f of progress.floors) for (const z of f.zones) {
+        if (z.zone_id === msg.zone_id) {
+          z.pct = msg.reverted_to_pct;
+          z.colour_signal = msg.colour_signal;
+          z.active_layer_name = msg.active_layer_name;
+          z.active_layer_pct  = msg.active_layer_pct;
+        }
+      }
+      activeFloor ? applyFloorFilter() : render();
+      buildFloorNav(progress.floors);
+      if (selId) renderPanel(findZone(selId), selId);
+      toast(`↩️ ロールバック: ${msg.reverted_to_pct?.toFixed(0)}% ← ${msg.previous_pct?.toFixed(0)}% (${msg.rolled_back_by})`);
+    }
+
+    if (msg.type === 'report_rejected') {
+      toast(`❌ レポート却下: ${msg.comment || 'コメントなし'}`);
+    }
+  };
+  ws.onclose = () => {
+    document.getElementById('wsdot').style.cssText = 'background:var(--grey)';
+    document.getElementById('wslbl').textContent = '再接続中...';
+    setTimeout(connectWS, 3000);
+  };
+}
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+async function api(path) {
+  const r = await fetch(API + path, { headers: { Authorization: 'Bearer ' + TOKEN } });
+  if (!r.ok) throw new Error(`${path} → ${r.status}`);
+  return r.json();
+}
+
+function setLoad(t, s='') {
+  document.getElementById('ltxt').textContent = t;
+  document.getElementById('lsub').textContent = s;
+  document.getElementById('loading-overlay').classList.remove('hidden');
+}
+function hideLoad() { document.getElementById('loading-overlay').classList.add('hidden'); }
+
+function toast(msg) {
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:180px;right:280px;background:#161b22;border:1px solid #30363d;color:#e6edf3;font-size:13px;padding:10px 16px;border-radius:8px;z-index:50;box-shadow:0 4px 12px rgba(0,0,0,.4)';
+  t.textContent = msg; document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+window.setView = (v, btn) => {
+  document.querySelectorAll('.vb').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const dir = VIEW_DIRS[v] || VIEW_DIRS.iso;
+  ctrl.target.copy(fitCenter);
+  cam.position.copy(fitCenter).add(dir.clone().multiplyScalar(fitDistance));
+  cam.lookAt(fitCenter);
+};
+window.resetCam = () => {
+  ctrl.target.copy(fitCenter);
+  cam.position.copy(fitCenter).add(VIEW_DIRS.iso.clone().multiplyScalar(fitDistance));
+  cam.lookAt(fitCenter);
+};
+
+// ── Entry ──────────────────────────────────────────────────────────────────
+// Config passed via URL params or startViewer(cfg) call
+
+let _started = false;
+
+window.startViewer = async (cfg = {}) => {
+  if (_started) return;   // guard against double-init (e.g. duplicate load events)
+  _started = true;
+
+  const params = new URLSearchParams(window.location.search);
+  API   = cfg.base  || params.get('base')  || 'http://localhost:8000';
+  TOKEN = cfg.token || params.get('token') || '';
+  PID   = cfg.pid   || params.get('pid')   || '';
+  const skelKey = cfg.skel || params.get('skel') || '';
+  const envKey  = cfg.env  || params.get('env')  || '';
+  const intKey  = cfg.int  || params.get('int')  || '';
+  const finKey  = cfg.fin  || params.get('fin')  || '';
+
+  if (!TOKEN || !PID) {
+    setLoad('❌ token と project ID が必要です', 'URLパラメータ ?token=...&pid=... を確認してください');
+    return;
+  }
+
+  initThree();
+  setLoad('進捗データを取得中...');
+
+  try {
+    // 1. Progress data
+    progress = await api(`/api/v1/projects/${PID}/progress`);
+    document.getElementById('overall-pct').textContent = progress.overall_pct.toFixed(1) + '%';
+    document.getElementById('lupd').textContent = '最終更新: ' + new Date().toLocaleString('ja-JP');
+
+    // Build zone ID set for mesh classification
+    for (const f of progress.floors) for (const z of f.zones) zoneIds.add(z.mesh_id);
+
+    // 2. Finish data per zone
+    setLoad('ゾーン情報を取得中...');
+    for (const f of progress.floors) {
+      try {
+        const zones = await api(`/api/v1/floors/${f.floor_id}/zones`);
+        for (const z of zones) if (z.model_mesh_id) finishMap[z.model_mesh_id] = z.finish_data || {};
+      } catch(_) {}
+    }
+
+    // 3. Model file from API
+    setLoad('モデルファイルを確認中...');
+    let skelUrl = null, finUrl = null;
+    try {
+      const md = await api(`/api/v1/projects/${PID}/model`);
+      const base = md.gltf_url || (md.gltf_s3_key ? `${API}/files/${md.gltf_s3_key}` : null);
+      skelUrl = skelKey ? `${API}/files/${skelKey}` : base;
+      finUrl  = finKey  ? `${API}/files/${finKey}`  : null;
+    } catch(e) {
+      skelUrl = skelKey ? `${API}/files/${skelKey}` : null;
+      finUrl  = finKey  ? `${API}/files/${finKey}`  : null;
+    }
+
+    // 4. Load skeleton
+    if (skelUrl) {
+      setLoad('骨格モデルを読み込み中...');
+      await loadGLB(skelUrl, skelMeshes, '骨格');
+    } else {
+      toast('⚠️ Skeleton GLBが見つかりません');
+    }
+
+    // 5. Load envelope GLB
+    const envUrl = envKey ? `${API}/files/${envKey}` : null;
+    if (envUrl) {
+      setLoad('外壁モデルを読み込み中...');
+      try {
+        await loadGLB(envUrl, envMeshes, '外壁');
+        toast('✅ 外壁レイヤー読み込み完了');
+      } catch(e) {
+        console.warn('Envelope GLB failed:', e.message);
+        toast('⚠️ 外壁GLBの読み込みに失敗しました');
+      }
+    }
+
+    // 5b. Load interior GLB
+    const intUrl = intKey ? `${API}/files/${intKey}` : null;
+    if (intUrl) {
+      setLoad('内装モデルを読み込み中...');
+      try {
+        await loadGLB(intUrl, intMeshes, '内装');
+        toast('✅ 内装レイヤー読み込み完了');
+      } catch(e) {
+        console.warn('Interior GLB failed:', e.message);
+        toast('⚠️ 内装GLBの読み込みに失敗しました');
+      }
+    }
+
+    // 5c. Load finished (legacy fallback)
+    const finUrl2 = finKey ? `${API}/files/${finKey}` : null;
+    if (finUrl2 && !envUrl && !intUrl) {
+      setLoad('完成図モデルを読み込み中...');
+      try {
+        await loadGLB(finUrl2, finMeshes, '完成図');
+        document.getElementById('lb-finished').disabled = false;
+      } catch(e) {
+        toast('⚠️ 完成図GLBの読み込みに失敗しました');
+      }
+    }
+
+    // 6. Auto-fit camera to whatever actually loaded, then render + nav + WS
+    autoFitCamera();
+    render();
+    buildFloorNav(progress.floors);
+    connectWS();
+    hideLoad();
+
+  } catch(err) {
+    setLoad('❌ ' + err.message, '');
+    console.error(err);
+  }
+};
+// Auto-start if URL params present
+window.addEventListener('load', () => {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('token') && params.get('pid')) {
+    startViewer();
+  } else if (params.get('autostart') === 'true') {
+    startViewer();
+  }
+});
+</script>
+</body>
+</html>

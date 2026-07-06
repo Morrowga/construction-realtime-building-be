@@ -1,0 +1,63 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Environment files — never commit real secrets/DB credentials
+.env
+.env.*
+!.env.example
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local file storage (USE_LOCAL_STORAGE=true dev mode) — uploaded photos,
+# model files, etc. should never be committed even if the path ends up
+# inside the repo directory during local testing.
+construction_local_storage/
+/tmp/construction_local_storage/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Jupyter (if any exploratory notebooks show up)
+.ipynb_checkpoints/
+
+# Alembic — DO NOT ignore alembic/versions/, migrations must be tracked.
+# Only ignore local sqlite fallback DBs if you ever use one for quick tests.
+*.sqlite3
+*.db
