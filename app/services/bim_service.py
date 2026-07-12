@@ -6,7 +6,8 @@ import os
 import tempfile
 from typing import Any
 
-from anthropic import AsyncAnthropic
+import fitz  # PyMuPDF — NEW dependency, see note at bottom of file
+from openai import AsyncOpenAI
 
 from app.config import settings
 
@@ -17,7 +18,7 @@ try:
 except ImportError:
     ifcopenshell = None
 
-client = AsyncAnthropic(api_key=settings.anthropic_api_key or "not-set")
+client = AsyncOpenAI(api_key=settings.openai_api_key or "not-set")
 
 PDF_ZONE_PROMPT = """You are analysing an architectural floor plan. Identify every room, \
 corridor, stairwell, mechanical space, and other named zone visible in the drawing.
@@ -34,11 +35,15 @@ Rules:
 - Include every distinct labelled space; skip dimension lines and annotations.
 - If no zones can be identified, return {"zones": []}."""
 
+PDF_RENDER_MAX_PAGES = 3   # floor-plan PDFs are rarely more than a couple pages
+PDF_RENDER_ZOOM = 2.0      # ~144 DPI equivalent — enough detail for room labels
+
 
 def parse_ifc(file_bytes: bytes) -> dict[str, str]:
     """Extract spaces/zones from an IFC file. Returns {mesh_id: zone_name}.
 
-    Raises RuntimeError if IfcOpenShell is not installed.
+    Raises RuntimeError if IfcOpenShell is not installed. Unaffected by the
+    OpenAI switch — this path never calls any LLM at all.
     """
     if ifcopenshell is None:
         raise RuntimeError(
@@ -78,34 +83,65 @@ def _strip_json_fences(text: str) -> str:
     return cleaned.strip()
 
 
-async def extract_pdf_zones(file_bytes: bytes) -> dict[str, str]:
-    """Send a floor-plan PDF to Claude and return {mesh_id: zone_name}."""
-    pdf_b64 = base64.standard_b64encode(file_bytes).decode("utf-8")
+def _pdf_pages_to_png_b64(file_bytes: bytes, max_pages: int = PDF_RENDER_MAX_PAGES) -> list[str]:
+    """Render each PDF page to a base64 PNG.
 
-    response = await client.messages.create(
+    IMPORTANT: this whole function exists because of a real capability gap
+    between providers — Anthropic's API accepts a raw PDF directly as a
+    "document" content block; OpenAI's chat completions API has no
+    equivalent, only image content blocks. So the PDF has to be rasterised
+    to images first. Capped at a few pages since floor-plan PDFs are
+    typically single-page, and each extra page is an extra image the model
+    has to process (cost + latency).
+    """
+    images_b64: list[str] = []
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    try:
+        page_count = min(len(doc), max_pages)
+        for page_index in range(page_count):
+            page = doc[page_index]
+            pix = page.get_pixmap(matrix=fitz.Matrix(PDF_RENDER_ZOOM, PDF_RENDER_ZOOM))
+            images_b64.append(base64.standard_b64encode(pix.tobytes("png")).decode("utf-8"))
+    finally:
+        doc.close()
+    return images_b64
+
+
+async def extract_pdf_zones(file_bytes: bytes) -> dict[str, str]:
+    """Render a floor-plan PDF's pages to images, send to OpenAI, return {mesh_id: zone_name}."""
+    images_b64 = _pdf_pages_to_png_b64(file_bytes)
+    if not images_b64:
+        logger.warning("PDF had no renderable pages")
+        return {}
+
+    content: list[dict[str, Any]] = [
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+        for b64 in images_b64
+    ]
+    content.append({"type": "text", "text": PDF_ZONE_PROMPT})
+
+    response = await client.chat.completions.create(
         model=settings.ai_model,
         max_tokens=2048,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": pdf_b64,
-                        },
-                    },
-                    {"type": "text", "text": PDF_ZONE_PROMPT},
-                ],
-            }
-        ],
+        response_format={"type": "json_object"},
+        messages=[{"role": "user", "content": content}],
     )
-    raw_text = "".join(
-        block.text for block in response.content if getattr(block, "type", "") == "text"
-    )
+    raw_text = response.choices[0].message.content or ""
     data: dict[str, Any] = json.loads(_strip_json_fences(raw_text))
     zone_map = {z["mesh_id"]: z["name"] for z in data.get("zones", []) if z.get("mesh_id")}
-    logger.info("Parsed PDF floor plan: %d zones found", len(zone_map))
+    logger.info("Parsed PDF floor plan (%d page(s) rendered): %d zones found", len(images_b64), len(zone_map))
     return zone_map
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# REQUIRED additions — same config changes as ai_service.py (openai_api_key,
+# AI_MODEL updated to an OpenAI model string), PLUS a new dependency:
+#
+# requirements.txt / pyproject.toml — add:
+#     pymupdf>=1.24.0
+#
+# No system-level packages needed (unlike pdf2image, which would require
+# poppler installed separately) — PyMuPDF bundles its own PDF rendering,
+# verified working with a real render-to-PNG smoke test before shipping
+# this file.
+# ─────────────────────────────────────────────────────────────────────────

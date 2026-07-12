@@ -2,7 +2,7 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -22,9 +22,13 @@ from app.schemas.project import (
     ProjectOut,
     ProjectUpdate,
 )
+from app.services import s3_service
 from app.utils.permissions import check_project_access, require_project_member
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
+
+PROJECT_IMAGE_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+PROJECT_IMAGE_MIME_EXT = {"image/jpeg": "jpg", "image/png": "png"}
 
 
 def _mean(values: list[float]) -> float:
@@ -155,9 +159,6 @@ async def list_projects(
     """List projects the current user belongs to.
 
     Admins see every project in their OWN organization only.
-    PREVIOUSLY this returned literally every project in the entire
-    database for any admin regardless of company — that was the core
-    multi-tenancy gap. Now every branch is filtered by organization_id.
     """
     if current_user.role == UserRole.admin:
         result = await db.execute(
@@ -208,6 +209,50 @@ async def update_project(
     )
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(project, field, value)
+    await db.commit()
+    await db.refresh(project)
+    return project
+
+
+@router.post("/{project_id}/image", response_model=ProjectOut)
+async def upload_project_image(
+    project_id: uuid.UUID,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Project:
+    """Upload/replace a project's cover image. Manager/admin only.
+
+    Deterministic key (projects/{id}/image.{ext}) — re-uploading naturally
+    overwrites the previous image at the same path rather than
+    accumulating orphaned old files, since a project only ever needs one
+    current cover image (unlike report photos, which persist historically
+    per-report and must never be overwritten).
+
+    Only image_s3_key is ever persisted — never a full URL. See the
+    comment on Project.image_s3_key for why.
+    """
+    project = await check_project_access(
+        db, project_id, current_user, allowed_project_roles={"manager"}
+    )
+
+    if file.content_type not in PROJECT_IMAGE_MIME_EXT:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported image type '{file.content_type}'. Allowed: image/jpeg, image/png",
+        )
+    contents = await file.read()
+    if len(contents) > PROJECT_IMAGE_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Image exceeds the 10MB size limit",
+        )
+
+    ext = PROJECT_IMAGE_MIME_EXT[file.content_type]
+    key = f"projects/{project_id}/image.{ext}"
+    await s3_service.upload_file(contents, key, file.content_type)
+
+    project.image_s3_key = key
     await db.commit()
     await db.refresh(project)
     return project
@@ -268,3 +313,25 @@ async def project_progress(
 ) -> dict[str, Any]:
     """Aggregated progress per floor and zone — includes colour_signal, layer info."""
     return await build_progress_tree(db, project.id)
+
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(
+    project_id: uuid.UUID,
+    current_user: User = Depends(require_role(UserRole.admin)),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Admin permanently deletes a project and everything under it —
+    floors, zones, task assignments, reports, approvals, model files,
+    and project memberships all cascade at the database level.
+
+    Scoped to the admin's own organization: a project_id from a different
+    org returns 404, not a cross-tenant deletion. This is irreversible —
+    the frontend must confirm before calling it.
+    """
+    project = await db.get(Project, project_id)
+    if project is None or project.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    await db.delete(project)
+    await db.commit()

@@ -45,6 +45,7 @@ class ProjectOut(BaseModel):
     geo_lat: float | None
     geo_lng: float | None
     geo_radius_m: int
+    image_s3_key: str | None
     created_at: datetime
     updated_at: datetime
 

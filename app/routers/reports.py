@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.models.floor import Floor
-from app.models.report import Report, ReportPhoto, ReportStatus
+from app.models.report import Approval, Report, ReportPhoto, ReportStatus
 from app.models.task import ZoneTask
 from app.models.user import User, UserRole
 from app.models.zone import Zone
@@ -27,6 +27,19 @@ MAX_PHOTO_BYTES = 10 * 1024 * 1024  # 10 MB
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png"}
 
 _EXT_FOR_MIME = {"image/jpeg": "jpg", "image/png": "png"}
+
+# Eager-load everything ReportOut's resolve_related_fields validator needs
+# to populate engineer_name / floor_name / zone_name / manager_name.
+# Without this exact chain, accessing e.g. report.engineer inside the
+# Pydantic validator would trigger an async lazy-load error rather than
+# just quietly returning None — these fields would previously have been
+# missing from every response for exactly this reason.
+_REPORT_LOAD_OPTIONS = (
+    selectinload(Report.photos),
+    selectinload(Report.approvals).selectinload(Approval.manager),
+    selectinload(Report.engineer),
+    selectinload(Report.zone_task).selectinload(ZoneTask.zone).selectinload(Zone.floor),
+)
 
 
 async def _get_report_chain(db: AsyncSession, zone_task_id: uuid.UUID):
@@ -109,9 +122,7 @@ async def submit_report(
     run_ai_analysis.delay(str(report.id))
 
     result = await db.execute(
-        select(Report)
-        .where(Report.id == report.id)
-        .options(selectinload(Report.photos), selectinload(Report.approvals))
+        select(Report).where(Report.id == report.id).options(*_REPORT_LOAD_OPTIONS)
     )
     return result.scalar_one()
 
@@ -133,7 +144,7 @@ async def list_reports(
         .join(ZoneTask, Report.zone_task_id == ZoneTask.id)
         .join(Zone, ZoneTask.zone_id == Zone.id)
         .join(Floor, Zone.floor_id == Floor.id)
-        .options(selectinload(Report.photos), selectinload(Report.approvals))
+        .options(*_REPORT_LOAD_OPTIONS)
         .order_by(Report.submitted_at.desc())
         .limit(limit)
     )
@@ -164,9 +175,7 @@ async def get_report(
 ) -> Report:
     """Report detail with photos and AI analysis."""
     result = await db.execute(
-        select(Report)
-        .where(Report.id == report_id)
-        .options(selectinload(Report.photos), selectinload(Report.approvals))
+        select(Report).where(Report.id == report_id).options(*_REPORT_LOAD_OPTIONS)
     )
     report = result.scalar_one_or_none()
     if report is None:

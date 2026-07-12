@@ -58,6 +58,14 @@ class Project(TimestampMixin, Base):
     geo_lng: Mapped[float | None] = mapped_column(Float)
     geo_radius_m: Mapped[int] = mapped_column(Integer, default=200, server_default="200", nullable=False)
 
+    # Only the storage key is persisted — NEVER a full URL. A stored
+    # absolute URL bakes in whatever host was current at upload time
+    # (e.g. "http://localhost:8000/..."), which breaks the moment it's
+    # accessed from a different device. The frontend always reconstructs
+    # `${API_BASE}/files/${image_s3_key}` fresh instead — same fix
+    # already applied to model GLBs and report photos.
+    image_s3_key: Mapped[str | None] = mapped_column(String(500))
+
     organization: Mapped["Organization"] = relationship(back_populates="projects")  # noqa: F821
     members: Mapped[list["ProjectMember"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"

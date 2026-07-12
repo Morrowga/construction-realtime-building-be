@@ -27,23 +27,23 @@ class Settings(BaseSettings):
     aws_region: str = "ap-northeast-1"
     s3_bucket_name: str = "construction-progress-dev"
 
-    # Anthropic
+    # Anthropic (kept for now — harmless if unused; remove once nothing
+    # imports it anymore)
     anthropic_api_key: str = ""
-    ai_model: str = "claude-sonnet-4-6"
+
+    # OpenAI
+    openai_api_key: str = ""
+    ai_model: str = "gpt-4o"
 
     # Email (app/services/email_service.py) — used for teammate temp
-    # credentials and landing page contact form notifications. Leave
-    # smtp_user/smtp_password blank for a local SMTP relay that doesn't
-    # require auth (e.g. mailhog/mailcatcher in dev).
+    # credentials. Leave smtp_user/smtp_password blank for a local SMTP
+    # relay that doesn't require auth (e.g. mailhog/mailcatcher in dev).
     smtp_host: str = "localhost"
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from_email: str = "noreply@construction-platform.local"
     smtp_use_tls: bool = True
-
-    # Where landing page contact form submissions get emailed to.
-    contact_notify_email: str = "contact@construction-platform.local"
 
     # App
     environment: str = "development"

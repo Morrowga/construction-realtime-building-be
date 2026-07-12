@@ -13,74 +13,89 @@
     --blue: #1f6feb; --blue-glow: #388bfd;
     --grey: #484f58; --amber: #d29922;
   }
+  /* MOBILE LAYOUT — separate file from the desktop viewer.html.
+     The desktop version uses a CSS grid with FIXED 220px + 260px side
+     columns — fine on a desktop browser, but on a ~390-430px phone
+     viewport those two fixed columns alone (480px) already exceed the
+     entire screen width, leaving the middle "1fr" canvas column with
+     zero or negative space. That's not a JS/timing bug, it's simple
+     arithmetic — hence a genuinely separate layout here: a single flex
+     column, canvas takes all real remaining space, floor nav becomes a
+     horizontal scroll strip, detail panel becomes a fixed-height bottom
+     sheet instead of a side column. */
   body {
     background: var(--bg); color: var(--text);
     font-family: -apple-system, "Hiragino Sans", "Yu Gothic", sans-serif;
     height: 100vh; overflow: hidden;
-    display: grid;
-    grid-template-columns: 220px 1fr 260px;
-    grid-template-rows: 52px 1fr 160px;
+    display: flex; flex-direction: column;
   }
   header {
-    grid-column: 1/-1; background: var(--surface);
+    flex: 0 0 auto; background: var(--surface);
     border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; padding: 0 20px; gap: 12px;
+    display: flex; align-items: center; padding: 0 10px; gap: 8px;
+    height: 46px; overflow: hidden;
   }
-  header h1 { font-size: 15px; font-weight: 600; }
-  .sub { font-size: 11px; color: var(--muted); }
-  #overall-pct { font-size: 22px; font-weight: 700; margin-left: 12px; }
-  #overall-label { font-size: 11px; color: var(--muted); }
+  header h1 { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 34vw; }
+  .sub { font-size: 9px; color: var(--muted); display: none; } /* hidden on mobile — not enough room, timestamp isn't critical */
+  #overall-pct { font-size: 16px; font-weight: 700; }
+  #overall-label { font-size: 9px; color: var(--muted); }
   .layer-toggle {
-    display: flex; gap: 3px; margin-left: 20px;
+    display: flex; gap: 2px; margin-left: auto;
     background: var(--bg); border: 1px solid var(--border);
-    border-radius: 6px; padding: 3px;
+    border-radius: 6px; padding: 2px;
   }
   .lb {
-    font-size: 11px; padding: 4px 10px; border: none;
+    font-size: 10px; padding: 4px 7px; border: none;
     border-radius: 4px; cursor: pointer; font-family: inherit;
     background: none; color: var(--muted); transition: all .15s;
   }
   .lb.active { background: var(--blue); color: #fff; }
   .lb:disabled { opacity: .35; cursor: not-allowed; }
-  .ws-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--grey); margin-left: auto; flex-shrink: 0; }
-  .ws-lbl { font-size: 11px; color: var(--muted); }
+  .ws-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--grey); flex-shrink: 0; }
+  .ws-lbl { display: none; } /* dot alone is enough on mobile — label text doesn't fit */
 
+  /* Floor nav — was a 220px-wide vertical sidebar; now a horizontal
+     scrollable strip of compact cards sitting between the header and
+     the canvas. */
   #floor-nav {
-    background: var(--surface); border-right: 1px solid var(--border);
-    padding: 12px 0; overflow-y: auto;
-    display: flex; flex-direction: column; gap: 3px;
+    flex: 0 0 auto; background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 8px 10px; overflow-x: auto; overflow-y: hidden;
+    display: flex; flex-direction: row; gap: 6px;
+    height: 62px; -webkit-overflow-scrolling: touch;
   }
   .fb {
-    display: flex; align-items: center; padding: 8px 16px;
-    cursor: pointer; border: none; background: none;
-    color: var(--muted); font-size: 13px; font-family: inherit;
-    gap: 8px; transition: background .1s, color .1s; text-align: left;
+    display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+    padding: 6px 12px; min-width: 64px; flex-shrink: 0;
+    cursor: pointer; border: 1px solid var(--border); background: var(--bg);
+    color: var(--muted); font-size: 11px; font-family: inherit;
+    gap: 3px; transition: background .1s, color .1s, border-color .1s;
+    border-radius: 8px; text-align: left;
   }
-  .fb:hover { background: rgba(255,255,255,.04); color: var(--text); }
-  .fb.active { background: rgba(31,111,235,.15); color: var(--blue-glow); }
-  .fn { font-weight: 600; font-size: 14px; min-width: 32px; }
-  .fbar { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .fb.active { background: rgba(31,111,235,.15); color: var(--blue-glow); border-color: var(--blue); }
+  .fn { font-weight: 700; font-size: 13px; }
+  .fbar { width: 100%; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
   .ffill { height: 100%; border-radius: 2px; transition: width .5s ease; }
-  .fnum { font-size: 11px; min-width: 32px; text-align: right; }
+  .fnum { font-size: 10px; }
 
-  #canvas-wrap { position: relative; overflow: hidden; }
+  #canvas-wrap { flex: 1 1 auto; position: relative; overflow: hidden; min-height: 0; }
   #three-canvas { display: block; width: 100%; height: 100%; }
 
   #legend {
-    position: absolute; top: 12px; left: 12px;
+    position: absolute; top: 8px; left: 8px;
     background: rgba(22,27,34,.9); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px 14px;
-    display: flex; flex-direction: column; gap: 6px;
+    border-radius: 8px; padding: 7px 10px;
+    display: flex; flex-direction: column; gap: 4px;
+    max-width: 44vw;
   }
-  .leg { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
-  .ldot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  .leg { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--muted); }
+  .ldot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
 
   #view-controls {
-    position: absolute; bottom: 12px; left: 12px; display: flex; gap: 6px;
+    position: absolute; bottom: 8px; left: 8px; display: flex; gap: 4px; flex-wrap: wrap; max-width: 60vw;
   }
   .vb {
     background: rgba(22,27,34,.85); border: 1px solid var(--border);
-    color: var(--muted); font-size: 11px; padding: 5px 10px;
+    color: var(--muted); font-size: 10px; padding: 4px 8px;
     border-radius: 6px; cursor: pointer; font-family: inherit;
   }
   .vb:hover, .vb.active { color: var(--text); border-color: var(--blue); }
@@ -89,78 +104,92 @@
     position: absolute; inset: 0; background: var(--bg);
     display: flex; flex-direction: column; align-items: center;
     justify-content: center; gap: 10px; transition: opacity .4s;
+    z-index: 20;
   }
   #loading-overlay.hidden { opacity: 0; pointer-events: none; }
   .spinner {
-    width: 34px; height: 34px; border: 3px solid var(--border);
+    width: 30px; height: 30px; border: 3px solid var(--border);
     border-top-color: var(--blue-glow); border-radius: 50%;
     animation: spin .8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  #ltxt { font-size: 13px; color: var(--muted); }
-  #lsub { font-size: 10px; color: var(--grey); max-width: 320px; text-align: center; word-break: break-all; }
+  #ltxt { font-size: 12px; color: var(--muted); }
+  #lsub { font-size: 9px; color: var(--grey); max-width: 80vw; text-align: center; word-break: break-all; }
 
+  /* Detail panel — was a 260px-wide right sidebar; now a fixed-height
+     bottom sheet, always visible (no open/close gesture needed for a
+     first pass — simplest reliable behaviour), scrollable internally. */
   #detail-panel {
-    background: var(--surface); border-left: 1px solid var(--border);
-    padding: 16px; overflow-y: auto;
-    display: flex; flex-direction: column; gap: 14px;
+    flex: 0 0 auto; height: 42vh; min-height: 200px;
+    background: var(--surface);
+    padding: 0 12px 12px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 10px;
+    -webkit-overflow-scrolling: touch;
+    transition: height .25s ease;
+    touch-action: none;
   }
-  .plbl { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-  .zname { font-size: 16px; font-weight: 700; }
-  .zmesh { font-size: 11px; color: var(--muted); font-family: monospace; }
-  .bigpct { font-size: 36px; font-weight: 800; line-height: 1; }
+  #detail-panel.expanded { overflow-y: auto; touch-action: pan-y; }
+  #panel-drag-handle {
+    flex: 0 0 auto; display: flex; justify-content: center;
+    padding: 8px 0 6px; background: var(--surface);
+    border-top: 1px solid var(--border);
+    cursor: grab;
+  }
+  #panel-drag-handle .grip { width: 36px; height: 4px; border-radius: 2px; background: var(--border); }
+  .plbl { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .zname { font-size: 14px; font-weight: 700; }
+  .zmesh { font-size: 10px; color: var(--muted); font-family: monospace; }
+  .bigpct { font-size: 28px; font-weight: 800; line-height: 1; }
   .pbar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
   .pfill { height: 100%; border-radius: 3px; transition: width .5s ease; }
-  .trow { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .trow { display: flex; align-items: center; gap: 8px; font-size: 11px; }
   .tdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .tname { flex: 1; color: var(--muted); }
-  .tpct { font-size: 11px; font-weight: 600; min-width: 30px; text-align: right; }
-  .tmbar { width: 50px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .tpct { font-size: 10px; font-weight: 600; min-width: 28px; text-align: right; }
+  .tmbar { width: 40px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
   .tmfill { height: 100%; border-radius: 2px; }
   .frow { display: flex; gap: 5px; flex-wrap: wrap; }
   .fchip {
-    font-size: 10px; padding: 2px 7px; border-radius: 4px;
+    font-size: 9px; padding: 2px 6px; border-radius: 4px;
     border: 1px solid var(--border); color: var(--muted);
     display: flex; align-items: center; gap: 4px;
   }
-  .fsw { width: 9px; height: 9px; border-radius: 2px; border: 1px solid rgba(255,255,255,.12); }
-  .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 20px 0; }
+  .fsw { width: 8px; height: 8px; border-radius: 2px; border: 1px solid rgba(255,255,255,.12); }
+  .empty { color: var(--muted); font-size: 12px; text-align: center; padding: 14px 0; }
 
   #photo-strip {
-    grid-column: 1/-1; background: var(--surface);
-    border-top: 1px solid var(--border); padding: 12px 16px;
-    display: none; gap: 10px; align-items: center; overflow-x: auto;
+    flex: 0 0 auto; background: var(--surface);
+    border-top: 1px solid var(--border); padding: 8px 10px;
+    display: none; gap: 8px; align-items: center; overflow-x: auto;
+    height: 84px; -webkit-overflow-scrolling: touch;
   }
-  .slbl { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .slbl { font-size: 10px; color: var(--muted); white-space: nowrap; }
   .pthumb {
-    width: 120px; height: 80px; border-radius: 6px; object-fit: cover;
+    width: 90px; height: 60px; border-radius: 6px; object-fit: cover;
     border: 1px solid var(--border); flex-shrink: 0; cursor: pointer;
   }
   .pthumb:hover { border-color: var(--blue); }
-  .pmeta { font-size: 10px; color: var(--muted); white-space: nowrap; }
-  .noph { font-size: 12px; color: var(--muted); }
-
+  .pmeta { font-size: 9px; color: var(--muted); white-space: nowrap; }
+  .noph { font-size: 11px; color: var(--muted); }
 
 </style>
 </head>
 <body>
 
-
-
 <header>
   <h1 id="pname">サクラレジデンス新築工事</h1>
   <span class="sub" id="lupd"></span>
   <span id="overall-pct">—%</span>
-  <span id="overall-label">全体進捗率</span>
+  <span id="overall-label">全体</span>
   <div class="layer-toggle">
     <button class="lb active" id="lb-progress" onclick="setMode('progress')" disabled>進捗</button>
     <button class="lb" id="lb-skeleton" onclick="setMode('skeleton')" disabled>骨格</button>
-    <button class="lb" id="lb-finished" onclick="setMode('finished')" disabled>完成図</button>
+    <button class="lb" id="lb-finished" onclick="setMode('finished')" disabled>完成</button>
   </div>
   <span class="ws-dot" id="wsdot"></span>
   <span class="ws-lbl" id="wslbl">未接続</span>
-  <button id="refresh-btn" onclick="refreshData()" style="margin-left:8px;background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);padding:5px 10px;cursor:pointer;font-size:12px" title="データを再取得">
-    ⟳ 更新
+  <button id="refresh-btn" onclick="refreshData()" style="margin-left:4px;background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);padding:4px 7px;cursor:pointer;font-size:13px" title="データを再取得">
+    ⟳
   </button>
 </header>
 
@@ -169,10 +198,9 @@
 <div id="canvas-wrap">
   <canvas id="three-canvas"></canvas>
   <div id="legend">
-    <div class="leg"><div class="ldot" style="background:#2ea043"></div>完了 100%</div>
-    <div class="leg"><div class="ldot" style="background:#1f6feb"></div>施工中 1–99%</div>
-    <div class="leg"><div class="ldot" style="background:#30363d;border:1px solid #484f58"></div>未着手 0%</div>
-    <div class="leg"><div class="ldot" style="background:#3a3a4a;border:1px dashed #555"></div>構造・家具</div>
+    <div class="leg"><div class="ldot" style="background:#2ea043"></div>完了</div>
+    <div class="leg"><div class="ldot" style="background:#1f6feb"></div>施工中</div>
+    <div class="leg"><div class="ldot" style="background:#30363d;border:1px solid #484f58"></div>未着手</div>
   </div>
   <div id="loading-overlay">
     <div class="spinner"></div>
@@ -187,16 +215,17 @@
   </div>
 </div>
 
+<div id="panel-drag-handle"><div class="grip"></div></div>
 <div id="detail-panel">
   <div style="display:flex;flex-direction:column;gap:8px">
     <div class="plbl">選択中のゾーン</div>
-    <div class="empty">ゾーンをクリックして<br>詳細を表示</div>
+    <div class="empty">階を選択して<br>詳細を表示</div>
   </div>
 </div>
 
 <div id="photo-strip">
-  <span class="slbl">📷 最新の現場写真</span>
-  <span class="noph">ゾーンを選択すると写真が表示されます</span>
+  <span class="slbl">写真</span>
+  <span class="noph">ゾーンを選択すると表示されます</span>
 </div>
 
 <script>
@@ -715,20 +744,22 @@ window.setMode = m => {
   activeFloor ? applyFloorFilter() : render();
 };
 
-// See viewer-mobile.html for the full explanation — buttons exist in the
-// HTML before this module finishes loading its network-fetched imports, so
-// they're marked disabled by default and enabled here, the earliest point
-// their handler is guaranteed to actually exist.
+// These buttons exist in the HTML the instant it parses, but this module
+// script needs to fetch its imports (three.module.js, GLTFLoader.js, etc.)
+// over the network before ANY of its top-level code — including the
+// window.setMode assignment just above — actually runs. Self-hosting these
+// files (rather than a fast CDN) makes that fetch window long enough to be
+// tappable in practice, especially on a phone over WiFi. Previously the
+// buttons were left clickable the whole time, so a tap during that window
+// hit setMode before it existed. They're marked `disabled` in the HTML by
+// default now — enable the two that don't depend on any GLB layer loading
+// right here, the earliest point at which their handler is guaranteed to
+// actually exist. lb-finished keeps its own separate enable-on-load logic
+// further down, since it depends on a legacy GLB actually loading first.
 document.getElementById('lb-progress').disabled = false;
 document.getElementById('lb-skeleton').disabled = false;
 
 // ── Overall summary — shown by default before anything is clicked ───────
-// PREVIOUSLY the detail panel just showed a static placeholder ("階を選択し
-// て詳細を表示") until the user actively clicked a floor or the building —
-// meaning on first load, and whenever "全体" is clicked, there was no
-// actual data visible at all. This shows the project's overall % plus a
-// per-floor breakdown by default, same data already available via
-// `progress`, just rendered without requiring a click first.
 function renderOverallSummary() {
   if (!progress) return;
   const panel = document.getElementById('detail-panel');
@@ -793,11 +824,7 @@ function buildFloorNav(floors) {
   }
 
   // Restore whichever floor (or 全体) was actually selected before this
-  // rebuild — buildFloorNav() creates brand new button elements every
-  // time it's called (e.g. from refreshData()), so without this the
-  // sidebar always visually resets to 全体 regardless of what's actually
-  // selected in activeFloor, creating a mismatch with the 3D view (which
-  // correctly keeps using activeFloor's real value).
+  // rebuild — see viewer.html for the full explanation.
   nav.querySelectorAll('.fb').forEach(b => b.classList.remove('active'));
   const targetId = activeFloor || '';
   const match = nav.querySelector(`[data-floor-id="${targetId}"]`);
@@ -902,13 +929,8 @@ async function loadFloorAIReport(floorId, floorName) {
 
 window.refreshData = async function() {
   const btn = document.getElementById('refresh-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '更新中...'; }
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
-    // Full re-fetch from the server — different from the WS handlers
-    // above, which only patch the in-memory progress object based on a
-    // single event's payload. This re-syncs everything from scratch,
-    // useful as a manual fallback if the WebSocket ever silently
-    // disconnects or data seems stale.
     progress = await api(`/api/v1/projects/${PID}/progress`);
     document.getElementById('overall-pct').textContent = progress.overall_pct.toFixed(1) + '%';
     document.getElementById('lupd').textContent = '最終更新: ' + new Date().toLocaleString('ja-JP');
@@ -923,16 +945,14 @@ window.refreshData = async function() {
   } catch (e) {
     toast('更新に失敗しました');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '⟳ 更新'; }
+    if (btn) { btn.disabled = false; btn.textContent = '⟳'; }
   }
 }
 
 window.goToReports = function() {
-  // Simply reuse the EXACT SAME mechanism a direct 3D click already
-  // uses — selectMesh() -> renderPanel() + loadPhotos() — instead of
-  // building a separate custom view. If the floor has multiple zones,
-  // select the first one; this matches building-click behavior exactly
-  // rather than inventing new UI.
+  // Same simplification as viewer.html — reuse the exact existing
+  // selectMesh() -> renderPanel() + loadPhotos() mechanism a direct 3D
+  // click already uses, instead of a separate custom view.
   if (!currentSelectedFloorId || !progress) return;
   const floor = progress.floors.find(f => f.floor_id === currentSelectedFloorId);
   if (!floor || !floor.zones.length) return;
@@ -962,7 +982,7 @@ function renderFloorAIReport(floorName, data) {
       <div class="plbl">部屋ごとの状況 (${(data.rooms||[]).length})</div>
       ${rows || '<div class="empty">データなし</div>'}
     </div>
-    <button onclick="goToReports()" style="margin-top:4px;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:linear-gradient(135deg, var(--blue), #0a0e14);color:#fff;font-size:13px;font-weight:600;cursor:pointer;width:100%">
+    <button onclick="goToReports()" style="margin-top:4px;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:linear-gradient(135deg, var(--blue), #0a0e14);color:#fff;font-size:13px;font-weight:600;cursor:pointer;width:100%">
       レポートを見る
     </button>`;
 }
@@ -1012,7 +1032,7 @@ function renderPanel(zone, id) {
     return `<div class="trow" style="background:${bg};border-radius:4px;padding:4px 6px;margin:0 -6px">
       <div style="font-size:10px;color:var(--text-muted);min-width:14px">${t.layer_order||i+1}</div>
       <div class="tdot" style="background:${tc}"></div>
-      <div class="tname">${t.task_name}${isActive?' ←':''}</div>
+      <div class="tname">${t.task_name}</div>
       <div class="tmbar"><div class="tmfill" style="width:${t.pct}%;background:${tc}"></div></div>
       <div class="tpct" style="color:${tc}">${t.pct.toFixed(0)}%</div>
       ${badge}
@@ -1046,6 +1066,56 @@ function renderPanel(zone, id) {
 }
 
 // ── Photos ─────────────────────────────────────────────────────────────────
+// ── Draggable detail panel (swipe up to expand near-fullscreen) ────────────
+(function setupPanelDrag() {
+  const handle = document.getElementById('panel-drag-handle');
+  const panel = document.getElementById('detail-panel');
+  const COLLAPSED_VH = 42, EXPANDED_VH = 85;
+  let startY = 0, startHeightPx = 0, dragging = false;
+
+  function vhToPx(vh) { return window.innerHeight * (vh / 100); }
+
+  function setHeightPx(px) {
+    const min = 200;
+    const max = vhToPx(EXPANDED_VH);
+    panel.style.height = Math.max(min, Math.min(max, px)) + 'px';
+  }
+
+  handle.addEventListener('touchstart', (e) => {
+    dragging = true;
+    startY = e.touches[0].clientY;
+    startHeightPx = panel.getBoundingClientRect().height;
+    panel.style.transition = 'none'; // instant tracking while actively dragging
+  }, { passive: true });
+
+  handle.addEventListener('touchmove', (e) => {
+    if (!dragging) return;
+    const dy = startY - e.touches[0].clientY; // dragging finger UP => positive => expand
+    setHeightPx(startHeightPx + dy);
+  }, { passive: true });
+
+  handle.addEventListener('touchend', () => {
+    if (!dragging) return;
+    dragging = false;
+    // Snap is now instant, not animated — a WebGL canvas resizing smoothly
+    // across every intermediate frame of a CSS transition is exactly what
+    // was causing the flashing. An instant jump means the canvas only
+    // needs to resize once, cleanly, instead of many times in a row.
+    panel.style.transition = 'none';
+    const currentPx = panel.getBoundingClientRect().height;
+    const collapsedPx = vhToPx(COLLAPSED_VH);
+    const expandedPx = vhToPx(EXPANDED_VH);
+    const midpoint = (collapsedPx + expandedPx) / 2;
+    if (currentPx > midpoint) {
+      panel.style.height = expandedPx + 'px';
+      panel.classList.add('expanded');
+    } else {
+      panel.style.height = collapsedPx + 'px';
+      panel.classList.remove('expanded');
+    }
+  });
+})();
+
 function hidePhotoStrip() {
   const s = document.getElementById('photo-strip');
   s.style.display = 'none';
@@ -1062,11 +1132,15 @@ async function loadPhotos(zone) {
       const r = await api(`/api/v1/reports?zone_task_id=${t.zone_task_id}&status=approved&limit=3`);
       // r IS the array itself — GET /reports returns list[ReportOut]
       // directly, not a {items:[...]} paginated wrapper. r?.items was
-      // always undefined, so this never ran at all. Also reconstruct URL
-      // from s3_key instead of the stale stored s3_url, same fix already
-      // applied to ReportCard.tsx and the mobile viewer.
+      // always undefined here, so this loop silently never ran at all,
+      // regardless of the URL issue below.
       for (const rp of r || []) {
         for (const ph of rp.photos || []) {
+          // Same stale-URL bug already fixed in ReportCard.tsx — ph.s3_url
+          // is a stored absolute URL baked in at upload time (hardcoded to
+          // localhost:8000 in local-storage mode), and breaks the moment
+          // it's accessed from a different host. Reconstruct from s3_key
+          // + the current API variable instead.
           photos.push({ url: `${API}/files/${ph.s3_key}`, date: rp.submitted_at });
         }
       }
@@ -1111,8 +1185,8 @@ function connectWS() {
       activeFloor ? applyFloorFilter() : render();
       buildFloorNav(progress.floors);
       if (selId) renderPanel(findZone(selId), selId);
-      const sigEmoji = msg.colour_signal === 'green' ? '🟢' : msg.colour_signal === 'amber' ? '🟡' : '⚪';
-      toast(`${sigEmoji} ${msg.active_layer_name || '進捗'} → ${msg.new_pct?.toFixed(0)}%`);
+      const sigLabel = msg.colour_signal === 'green' ? '完了' : msg.colour_signal === 'amber' ? '施工中' : '未着手';
+      toast(`[${sigLabel}] ${msg.active_layer_name || '進捗'} → ${msg.new_pct?.toFixed(0)}%`);
     }
 
     if (msg.type === 'progress_rollback' && progress) {
@@ -1127,11 +1201,11 @@ function connectWS() {
       activeFloor ? applyFloorFilter() : render();
       buildFloorNav(progress.floors);
       if (selId) renderPanel(findZone(selId), selId);
-      toast(`↩️ ロールバック: ${msg.reverted_to_pct?.toFixed(0)}% ← ${msg.previous_pct?.toFixed(0)}% (${msg.rolled_back_by})`);
+      toast(`ロールバック: ${msg.reverted_to_pct?.toFixed(0)}% ← ${msg.previous_pct?.toFixed(0)}% (${msg.rolled_back_by})`);
     }
 
     if (msg.type === 'report_rejected') {
-      toast(`❌ レポート却下: ${msg.comment || 'コメントなし'}`);
+      toast(`却下: ${msg.comment || 'コメントなし'}`);
     }
 
     // Backend just finished (re)generating a floor's stored AI summary
@@ -1179,7 +1253,7 @@ function hideLoad() { document.getElementById('loading-overlay').classList.add('
 
 function toast(msg) {
   const t = document.createElement('div');
-  t.style.cssText = 'position:fixed;bottom:180px;right:280px;background:#161b22;border:1px solid #30363d;color:#e6edf3;font-size:13px;padding:10px 16px;border-radius:8px;z-index:50;box-shadow:0 4px 12px rgba(0,0,0,.4)';
+  t.style.cssText = 'position:fixed;bottom:100px;right:12px;max-width:80vw;background:#161b22;border:1px solid #30363d;color:#e6edf3;font-size:13px;padding:10px 16px;border-radius:8px;z-index:50;box-shadow:0 4px 12px rgba(0,0,0,.4)';
   t.textContent = msg; document.body.appendChild(t);
   setTimeout(() => t.remove(), 3000);
 }
@@ -1217,7 +1291,7 @@ window.startViewer = async (cfg = {}) => {
   const finKey  = cfg.fin  || params.get('fin')  || '';
 
   if (!TOKEN || !PID) {
-    setLoad('❌ token と project ID が必要です', 'URLパラメータ ?token=...&pid=... を確認してください');
+    setLoad('エラー: token と project ID が必要です', 'URLパラメータ ?token=...&pid=... を確認してください');
     return;
   }
 
@@ -1268,7 +1342,7 @@ window.startViewer = async (cfg = {}) => {
       setLoad('骨格モデルを読み込み中...');
       await loadGLB(skelUrl, skelMeshes, '骨格');
     } else {
-      toast('⚠️ Skeleton GLBが見つかりません');
+      toast('警告: Skeleton GLBが見つかりません');
     }
 
     // 5. Load envelope GLB
@@ -1277,10 +1351,10 @@ window.startViewer = async (cfg = {}) => {
       setLoad('外壁モデルを読み込み中...');
       try {
         await loadGLB(envUrl, envMeshes, '外壁');
-        toast('✅ 外壁レイヤー読み込み完了');
+        toast('外壁レイヤー読み込み完了');
       } catch(e) {
         console.warn('Envelope GLB failed:', e.message);
-        toast('⚠️ 外壁GLBの読み込みに失敗しました');
+        toast('警告: 外壁GLBの読み込みに失敗しました');
       }
     }
 
@@ -1298,7 +1372,7 @@ window.startViewer = async (cfg = {}) => {
         await loadGLB(finUrl2, finMeshes, '完成図');
         document.getElementById('lb-finished').disabled = false;
       } catch(e) {
-        toast('⚠️ 完成図GLBの読み込みに失敗しました');
+        toast('警告: 完成図GLBの読み込みに失敗しました');
       }
     }
 
@@ -1311,7 +1385,7 @@ window.startViewer = async (cfg = {}) => {
     hideLoad();
 
   } catch(err) {
-    setLoad('❌ ' + err.message, '');
+    setLoad('エラー: ' + err.message, '');
     console.error(err);
   }
 };

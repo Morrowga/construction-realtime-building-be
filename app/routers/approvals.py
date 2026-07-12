@@ -17,6 +17,7 @@ from app.models.zone import Zone
 from app.schemas.report import ApprovalCreate, ApprovalOut
 from app.services import realtime_service
 from app.utils.permissions import check_project_access
+from app.workers.tasks import generate_floor_ai_summary
 
 router = APIRouter(prefix="/api/v1/reports/{report_id}/approval", tags=["approvals"])
 
@@ -153,9 +154,19 @@ async def create_approval(
                 "layer_order": zone_task.layer_order,
             },
         )
+
+        # Regenerate this floor's stored AI summary — exactly ONCE, here,
+        # because real progress data just changed. This replaces the old
+        # behaviour of calling the AI live every time someone clicked the
+        # floor in the viewer, which re-ran the same expensive analysis
+        # over and over for identical results.
+        generate_floor_ai_summary.delay(str(floor.id))
+
         return approval
 
-    # Rejection
+    # Rejection — doesn't change progress_pct/colour_signal at all, so no
+    # floor AI summary regeneration is triggered here; nothing the summary
+    # discusses (percentages, trend) actually changed.
     approval = Approval(
         report_id=report.id,
         manager_id=current_user.id,
@@ -250,6 +261,10 @@ async def rollback_approval(
             "reason": reason,
         },
     )
+
+    # Same reasoning as the approve path — progress actually changed
+    # (reverted), so the floor's stored AI summary needs a fresh run.
+    generate_floor_ai_summary.delay(str(floor.id))
 
     return {
         "message": "Report rolled back successfully",

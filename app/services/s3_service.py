@@ -31,7 +31,7 @@ def _local_path(key: str) -> Path:
 
 def _object_url(key: str) -> str:
     if _USE_LOCAL:
-        return f"http://localhost:8000/files/{key}"
+        return f"http://192.168.1.20:8000/files/{key}"
     return f"https://{settings.s3_bucket_name}.s3.{settings.aws_region}.amazonaws.com/{key}"
 
 
@@ -88,7 +88,7 @@ def download_file_sync(key: str) -> bytes:
 def generate_presigned_url_sync(key: str, expires: int = 3600) -> str:
     if _USE_LOCAL:
         # In local mode return a direct localhost URL — no expiry needed.
-        url = f"http://localhost:8000/files/{key}"
+        url = f"http://192.168.1.20:8000/files/{key}"
         logger.debug("LOCAL presign: %s", url)
         return url
 

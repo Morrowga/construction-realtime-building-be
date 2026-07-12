@@ -24,6 +24,7 @@ from app.models.organization import Organization
 from app.models.user import User, UserRole
 from app.models.project import Project, ProjectMember, ProjectStatus, ReportFormat, ProjectMemberRole
 from app.models.floor import Floor
+from app.models.floor_ai_summary import FloorAISummary
 from app.models.zone import Zone
 from app.models.task import TaskTemplate, TaskCategory, ZoneTask
 from app.models.report import Report, ReportPhoto, Approval, ReportStatus, ApprovalAction
@@ -39,6 +40,7 @@ __all__ = [
     "ReportFormat",
     "ProjectMemberRole",
     "Floor",
+    "FloorAISummary",
     "Zone",
     "TaskTemplate",
     "TaskCategory",

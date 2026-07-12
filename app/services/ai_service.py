@@ -4,13 +4,19 @@ import json
 import logging
 from typing import Any
 
-from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
 
 from app.config import settings
 
 logger = logging.getLogger("app.ai")
 
-client = AsyncAnthropic(api_key=settings.anthropic_api_key or "not-set")
+# NOTE: switched from Anthropic to OpenAI for cost reasons. settings.ai_model
+# should now hold an OpenAI model string (e.g. "gpt-4o-mini" — recommended:
+# cheapest OpenAI model that still supports vision input; "gpt-4o" also
+# works if quality matters more than cost). settings.openai_api_key is a
+# NEW config field — see the note at the bottom of this file for exactly
+# what to add to app/config.py and your .env.
+client = AsyncOpenAI(api_key=settings.openai_api_key or "not-set")
 
 SYSTEM_PROMPT = """You are a construction progress analyst for a Japanese construction \
 progress tracking platform. You will receive one or more site photos plus a short note \
@@ -59,9 +65,10 @@ MAX_RETRIES = 2
 
 
 def _strip_json_fences(text: str) -> str:
+    """Kept as a defensive measure even though response_format={"type":
+    "json_object"} should already guarantee fence-free JSON from OpenAI."""
     cleaned = text.strip()
     if cleaned.startswith("```"):
-        # Remove opening fence (``` or ```json) and closing fence.
         cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
         if cleaned.rstrip().endswith("```"):
             cleaned = cleaned.rstrip()[:-3]
@@ -76,12 +83,14 @@ def _build_user_content(
     zone_name: str,
     previous_pct: float,
 ) -> list[dict[str, Any]]:
+    """OpenAI's vision content shape differs from Anthropic's — images are
+    "image_url" blocks with a data: URI, not "image"/base64 source objects."""
     content: list[dict[str, Any]] = []
     for b64, media_type in zip(photos_b64, media_types):
         content.append(
             {
-                "type": "image",
-                "source": {"type": "base64", "media_type": media_type, "data": b64},
+                "type": "image_url",
+                "image_url": {"url": f"data:{media_type};base64,{b64}"},
             }
         )
     content.append(
@@ -107,7 +116,7 @@ async def analyse_report(
     previous_pct: float,
     media_types: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Send photos + note to Claude and return the structured analysis dict.
+    """Send photos + note to OpenAI and return the structured analysis dict.
 
     Retries up to MAX_RETRIES times on API or parse errors. On total failure,
     returns a conservative fallback so the report never gets stuck.
@@ -120,15 +129,16 @@ async def analyse_report(
     last_error: Exception | None = None
     for attempt in range(MAX_RETRIES + 1):
         try:
-            response = await client.messages.create(
+            response = await client.chat.completions.create(
                 model=settings.ai_model,
                 max_tokens=1024,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": content}],
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": content},
+                ],
             )
-            raw_text = "".join(
-                block.text for block in response.content if getattr(block, "type", "") == "text"
-            )
+            raw_text = response.choices[0].message.content or ""
             data = json.loads(_strip_json_fences(raw_text))
 
             missing = REQUIRED_KEYS - data.keys()
@@ -158,3 +168,123 @@ async def analyse_report(
         "summary": "AI analysis failed; manual review required.",
         "error": str(last_error),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Floor-level AI summary (viewer.html floor-arrow click → side panel)
+# ─────────────────────────────────────────────────────────────────────────
+# IMPORTANT DIFFERENCE from analyse_report above: this call is never trusted
+# for numbers. The router (app/routers/floor_ai.py) computes every room's
+# actual pct/colour_signal from real approved-report data BEFORE calling
+# this — the AI only ever writes the narrative/trend text on top of numbers
+# we already know are correct. This avoids the AI ever inventing or
+# contradicting a percentage a manager already approved.
+#
+# ALSO IMPORTANT (per earlier conversation): this function is only ever
+# invoked from routers/approvals.py, right after an approve/rollback
+# commits — never on every floor-view/click. GET /floors/{id}/ai-summary
+# is a pure database read of the stored result; it never calls this
+# function itself. If AI credits ever run out, the fallback below is what
+# renders in the viewer, not a repeated failed call.
+
+FLOOR_SUMMARY_SYSTEM_PROMPT = """You are a construction progress analyst summarising one \
+floor of a building for a Japanese construction management dashboard. You will receive \
+the floor name, its overall percentage, and a list of rooms (zones) — each with its \
+current percentage, status, and a short chronological history of submitted/approved \
+progress reports.
+
+Your job: write a concise plain-language summary in Japanese describing the floor's \
+overall status — which rooms are complete, which are lagging behind, and any notable \
+trend (e.g. a room that regressed after a rollback, or one progressing unusually slowly \
+compared to the rest of the floor). Then write one short room-specific note per room.
+
+Respond with ONLY valid JSON (no markdown fences, no commentary) in this exact schema:
+{
+  "summary": "2-4 sentences in Japanese describing the floor overall",
+  "rooms": [
+    {"zone_id": "...", "analysis": "one sentence in Japanese about this room's trend/status"}
+  ]
+}
+
+Rules:
+- Base your analysis ONLY on the data provided — never invent a percentage, date, or \
+event that isn't in the input.
+- If a room has no report history yet, say so plainly (e.g. "まだ報告がありません") rather \
+than speculating about its state.
+- Keep language plain and non-technical — this is read by construction managers and \
+clients, not engineers.
+- Every zone_id given in the input must appear exactly once in "rooms"."""
+
+FLOOR_SUMMARY_MAX_RETRIES = 1  # lower stakes than photo analysis — this has a full fallback
+
+
+async def summarize_floor_progress(
+    floor_name: str,
+    overall_pct: float,
+    rooms: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """rooms: [{ zone_id, name, pct, colour_signal, history: [str, ...] }, ...]
+
+    Returns { "summary": str, "rooms": [{ "zone_id": str, "analysis": str }] }.
+    On any failure, returns a safe fallback with an empty narrative per room —
+    the router still has the real numbers regardless of whether this succeeds.
+    """
+    user_payload = {
+        "floor_name": floor_name,
+        "overall_pct": overall_pct,
+        "rooms": rooms,
+    }
+
+    last_error: Exception | None = None
+    for attempt in range(FLOOR_SUMMARY_MAX_RETRIES + 1):
+        try:
+            response = await client.chat.completions.create(
+                model=settings.ai_model,
+                max_tokens=800,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": FLOOR_SUMMARY_SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+                ],
+            )
+            raw_text = response.choices[0].message.content or ""
+            data = json.loads(_strip_json_fences(raw_text))
+            if "summary" not in data or "rooms" not in data:
+                raise ValueError("AI floor summary missing required keys")
+            return data
+        except Exception as exc:  # noqa: BLE001 — retry once, then fall back
+            last_error = exc
+            logger.warning(
+                "Floor AI summary attempt %d/%d failed: %s",
+                attempt + 1, FLOOR_SUMMARY_MAX_RETRIES + 1, exc,
+            )
+            if attempt < FLOOR_SUMMARY_MAX_RETRIES:
+                await asyncio.sleep(1)
+
+    logger.error("Floor AI summary failed after retries: %s", last_error)
+    return {
+        "summary": "AI分析は現在利用できません。各部屋の実際の進捗データは以下に表示されています。",
+        "rooms": [{"zone_id": r["zone_id"], "analysis": ""} for r in rooms],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# REQUIRED config changes (app/config.py + .env) — this file alone isn't
+# enough to run:
+#
+# app/config.py — add:
+#     openai_api_key: str = ""
+#
+# .env — add/change:
+#     OPENAI_API_KEY=sk-...           (new)
+#     AI_MODEL=gpt-4o-mini            (was a Claude model string before —
+#                                       gpt-4o-mini is the cheapest OpenAI
+#                                       model that still supports vision;
+#                                       use gpt-4o instead if quality matters
+#                                       more than cost)
+#
+# requirements.txt / pyproject.toml — add:
+#     openai>=1.0.0
+# (anthropic package can stay installed harmlessly, or be removed once
+# nothing imports it anymore — check bim_service.py too, see its own note)
+# ─────────────────────────────────────────────────────────────────────────

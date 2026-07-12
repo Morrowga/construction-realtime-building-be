@@ -9,10 +9,12 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.models.floor import Floor
+from app.models.report import Report
 from app.models.task import TaskCategory, TaskTemplate, ZoneTask
 from app.models.user import User, UserRole
 from app.models.zone import Zone
 from app.schemas.task import TaskTemplateCreate, TaskTemplateOut, ZoneTaskAssign, ZoneTaskOut
+from app.services import s3_service
 from app.utils.permissions import check_project_access
 
 router = APIRouter(prefix="/api/v1", tags=["tasks"])
@@ -92,3 +94,53 @@ async def assign_task_to_zone(
         .options(selectinload(ZoneTask.template))
     )
     return result.scalar_one()
+
+
+@router.delete("/zones/{zone_id}/tasks/{zone_task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_zone_task(
+    zone_id: uuid.UUID,
+    zone_task_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Remove a task assignment from a zone (project managers and admins).
+
+    Cascades at the database level to delete any reports/approvals ever
+    submitted against this task (Report.zone_task_id is ondelete=CASCADE)
+    — this is irreversible, the frontend confirms before calling it.
+
+    IMPORTANT: the database cascade only removes ROWS — it does nothing
+    to the actual photo files sitting in S3/local storage, since that's
+    outside the database entirely. Without this cleanup step, every
+    report's photos would become orphaned files taking up storage forever
+    with no way to find or remove them afterward. So: explicitly delete
+    each report's photo files first (same pattern as reports.py's own
+    delete_report endpoint), THEN let the DB cascade handle the rows.
+    """
+    zone_task = await db.get(ZoneTask, zone_task_id)
+    if zone_task is None or zone_task.zone_id != zone_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Zone task not found")
+
+    zone = await db.get(Zone, zone_id)
+    floor = await db.get(Floor, zone.floor_id)
+    await check_project_access(
+        db, floor.project_id, current_user, allowed_project_roles={"manager"}
+    )
+
+    reports = (
+        await db.execute(
+            select(Report)
+            .where(Report.zone_task_id == zone_task_id)
+            .options(selectinload(Report.photos))
+        )
+    ).scalars().unique().all()
+
+    for report in reports:
+        for photo in report.photos:
+            try:
+                await s3_service.delete_file(photo.s3_key)
+            except Exception:  # noqa: BLE001 — best-effort cleanup, don't block the delete
+                pass
+
+    await db.delete(zone_task)
+    await db.commit()

@@ -20,6 +20,7 @@ from app.routers import (
     approvals,
     auth,
     contact,
+    floor_ai,
     floors,
     model_files,
     organizations,
@@ -64,6 +65,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+app.mount("/vendor", StaticFiles(directory="vendor"), name="vendor")
 
 # --- CORS -------------------------------------------------------------------
 if settings.environment == "development" or settings.cors_origins.strip() == "*":
@@ -129,6 +132,19 @@ async def health() -> dict:
 @app.get("/viewer", include_in_schema=False)
 async def viewer():
     return FileResponse("viewer.html")
+
+@app.get("/viewer-mobile", include_in_schema=False)
+async def viewer_mobile():
+    """Mobile-optimized layout — same JS logic, different CSS/HTML
+    structure. The desktop viewer.html uses a CSS grid with fixed
+    220px + 260px side columns, which leaves negative/zero space for the
+    canvas on a real phone viewport. This is a genuinely separate file
+    (not a shared responsive stylesheet) since the two layouts differ
+    enough structurally (bottom sheet vs side column, horizontal floor
+    strip vs vertical sidebar) that maintaining one file for both was
+    more fragile than just having two.
+    """
+    return FileResponse("viewer-mobile.html")
     
 # --- Local file serving (only when USE_LOCAL_STORAGE=true) ------------------
 if os.environ.get("USE_LOCAL_STORAGE", "").lower() in ("true", "1", "yes"):
@@ -144,6 +160,7 @@ app.include_router(organizations.router)
 app.include_router(contact.router)
 app.include_router(projects.router)
 app.include_router(floors.router)
+app.include_router(floor_ai.router)
 app.include_router(zones.router)
 app.include_router(tasks.router)
 app.include_router(reports.router)

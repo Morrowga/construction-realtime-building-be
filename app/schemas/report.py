@@ -34,6 +34,7 @@ class ApprovalOut(BaseModel):
     id: uuid.UUID
     report_id: uuid.UUID
     manager_id: uuid.UUID
+    manager_name: str | None = None
     action: ApprovalAction
     comment: str | None
     final_pct: float | None
@@ -42,6 +43,17 @@ class ApprovalOut(BaseModel):
     rolled_back_at: datetime | None = None
     rollback_reason: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_manager_name(cls, data: Any) -> Any:
+        """Requires Approval.manager to be eager-loaded by the caller
+        (selectinload(Approval.manager)) — accessing it lazily in an async
+        context without that would raise, not just silently skip."""
+        manager = getattr(data, "manager", None)
+        if manager is not None:
+            data.__dict__["manager_name"] = manager.full_name or manager.email
+        return data
+
 
 class ReportOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -49,6 +61,9 @@ class ReportOut(BaseModel):
     id: uuid.UUID
     zone_task_id: uuid.UUID
     engineer_id: uuid.UUID
+    engineer_name: str | None = None
+    floor_name: str | None = None
+    zone_name: str | None = None
     note: str | None
     status: ReportStatus
     engineer_progress_pct: float | None
@@ -65,12 +80,36 @@ class ReportOut(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def resolve_approval(cls, data: Any) -> Any:
-        """Handle both old single `approval` and new `approvals` list relationship."""
+    def resolve_related_fields(cls, data: Any) -> Any:
+        """Pulls engineer name, floor name, and zone name off eager-loaded
+        relationships (Report.engineer, Report.zone_task.zone.floor) — the
+        raw Report/ZoneTask/Zone/Floor models only store IDs, these
+        human-readable names never existed on the response before this.
+
+        Also keeps the pre-existing approval-list -> single-approval
+        resolution (latest non-rolled-back approval), unchanged.
+
+        REQUIRES the router's query to eager-load all of these via
+        selectinload — see reports.py. Without that, accessing e.g.
+        data.engineer on an async session would raise a lazy-load error,
+        not silently return None.
+        """
         if hasattr(data, "approvals"):
-            # New model — use the @property which returns latest non-rolled-back approval
             valid = [a for a in (data.approvals or []) if not a.is_rolled_back]
             data.__dict__["approval"] = valid[-1] if valid else None
+
+        engineer = getattr(data, "engineer", None)
+        if engineer is not None:
+            data.__dict__["engineer_name"] = engineer.full_name or engineer.email
+
+        zone_task = getattr(data, "zone_task", None)
+        zone = getattr(zone_task, "zone", None) if zone_task is not None else None
+        if zone is not None:
+            data.__dict__["zone_name"] = zone.name
+            floor = getattr(zone, "floor", None)
+            if floor is not None:
+                data.__dict__["floor_name"] = floor.name
+
         return data
 
 
